@@ -51,17 +51,17 @@ dsh --profile tui --help                # the TUI's own flags
 
 The stock dsh launcher only hardcodes `web` and `plugin` as bare subcommands, so the profile flag is the intended shape for custom surfaces. If you want the exact string `dsh tui`, add a one-line shell alias (for example `doskey tui=dsh --profile tui $*` in CMD).
 
-### `dsh-tui` convenience launcher
+### `dsh-oc-tui` convenience launcher
 
-The package also ships a `dsh-tui` bin. It is equivalent to `dsh --profile tui`, but it verifies that the `tui` profile actually has the plugin installed and prints the one-time setup command when it does not:
+The package also ships a `dsh-oc-tui` bin. It is equivalent to `dsh --profile tui`, but it verifies that the `tui` profile actually has the plugin installed and prints the one-time setup command when it does not:
 
 ```sh
-dsh-tui                 # boot the tui profile
-dsh-tui --profile mytui # boot a profile with a different name
-dsh-tui --help          # launcher help
+dsh-oc-tui                 # boot the tui profile
+dsh-oc-tui --profile mytui # boot a profile with a different name
+dsh-oc-tui --help          # launcher help
 ```
 
-The launcher prefers an installed `dsh` on PATH and falls back to `npx --yes @deepseek-ai/dsh`. Install the bin globally with `npm install -g dsh-oc-tui` (or run it from a local checkout with `node bin/dsh-tui.js`). Environment overrides:
+The launcher prefers an installed `dsh` on PATH and falls back to `npx --yes @deepseek-ai/dsh`. Install the bin globally with `npm install -g dsh-oc-tui` (or run it from a local checkout with `node bin/dsh-oc-tui.js`). Environment overrides:
 
 | Variable | Effect |
 | --- | --- |
@@ -154,7 +154,7 @@ The settings menu projects the same Host settings namespaces used by the WebUI a
 
 ## Plugin model
 
-This package is a DeepSeek Harness Cordis plugin, not a standalone agent runtime. The optional `dsh-tui` binary only launches `dsh --profile tui`; DSH continues to own model routing, agent execution, tools, approvals, commands, durable sessions, and credentials. The plugin owns terminal input and presentation.
+This package is a DeepSeek Harness Cordis plugin, not a standalone agent runtime. The optional `dsh-oc-tui` binary only launches `dsh --profile tui`; DSH continues to own model routing, agent execution, tools, approvals, commands, durable sessions, and credentials. The plugin owns terminal input and presentation.
 
 ## How it works
 
@@ -217,7 +217,7 @@ lib/interrupt.js    Ctrl+C lifecycle state
 lib/web-settings.js shared WebUI settings projection
 lib/markdown.js     markdown -> styled lines
 lib/util.js         text/display helpers
-bin/dsh-tui.js      convenience launcher for `dsh --profile tui`
+bin/dsh-oc-tui.js  convenience launcher for `dsh --profile tui`
 cordis.patch.yml    bundle patch layer (TUI rows)
 docs/用户手册.md      Chinese user manual
 tests/smoke.test.mjs  standalone smoke tests

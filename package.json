@@ -13,7 +13,7 @@
     "./startup": "./lib/startup.js"
   },
   "bin": {
-    "dsh-tui": "bin/dsh-tui.js"
+    "dsh-oc-tui": "bin/dsh-oc-tui.js"
   },
   "files": [
     "lib",

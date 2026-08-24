@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// dsh-tui: convenience launcher for the DeepSeek Harness terminal UI.
+// dsh-oc-tui: convenience launcher for the DeepSeek Harness terminal UI.
 //
 // It is equivalent to `dsh --profile tui <args...>`, but it:
 //   1. prefers an installed dsh CLI on PATH,
@@ -21,10 +21,10 @@ const DSH_PACKAGE = '@deepseek-ai/dsh'
 const manifest = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
 
 function printHelp() {
-  process.stdout.write(`dsh-tui ${manifest.version} — launch the DeepSeek Harness terminal UI
+  process.stdout.write(`dsh-oc-tui ${manifest.version} — launch the DeepSeek Harness terminal UI
 
 Usage:
-  dsh-tui [--profile <name>] [app args...]
+  dsh-oc-tui [--profile <name>] [app args...]
 
 The launcher boots the dsh profile that has ${PACKAGE_NAME} installed and
 forwards every other argument to the TUI app (--resume, --model, --provider,
@@ -33,13 +33,13 @@ forwards every other argument to the TUI app (--resume, --model, --provider,
 Options:
   --profile <name>   profile to boot (default: tui; env DSH_TUI_PROFILE)
   -h, --help         show this help
-  -V, --version      show the dsh-tui version
+  -V, --version      show the dsh-oc-tui version
 
 One-time setup (requires pnpm on PATH):
   dsh plugin --profile tui add ${PACKAGE_NAME}
 
 Then:
-  dsh-tui
+  dsh-oc-tui
 `)
 }
 
@@ -61,7 +61,7 @@ function parseArgs(argv) {
     } else if (arg === '--profile') {
       const value = argv[++i]
       if (value === undefined || value === '' || value.startsWith('-')) {
-        process.stderr.write('dsh-tui: --profile needs a name\n')
+        process.stderr.write('dsh-oc-tui: --profile needs a name\n')
         process.exit(1)
       }
       profile = value
@@ -107,13 +107,13 @@ function checkProfile(profile, setupCommand) {
   const status = profileStatus(profile)
   if (status === 'ready') return true
   if (status === 'missing') {
-    process.stderr.write(`dsh-tui: profile '${profile}' is not set up.\n`)
+    process.stderr.write(`dsh-oc-tui: profile '${profile}' is not set up.\n`)
     process.stderr.write(`Create it once with (requires pnpm on PATH):\n  ${setupCommand}\n`)
   } else {
-    process.stderr.write(`dsh-tui: profile '${profile}' exists but does not have ${PACKAGE_NAME} installed.\n`)
+    process.stderr.write(`dsh-oc-tui: profile '${profile}' exists but does not have ${PACKAGE_NAME} installed.\n`)
     process.stderr.write(`Add it once with:\n  ${setupCommand}\n`)
   }
-  process.stderr.write(`Then run: dsh-tui --profile ${profile}\n`)
+  process.stderr.write(`Then run: dsh-oc-tui --profile ${profile}\n`)
   process.stderr.write('Set DSH_TUI_SKIP_CHECK=1 to skip this check.\n')
   return false
 }
@@ -194,7 +194,7 @@ function main() {
   }
   if (profile === '' || profile === '.' || profile === '..' || profile === 'node_modules'
     || profile.includes('/') || profile.includes('\\')) {
-    process.stderr.write(`dsh-tui: invalid profile name ${JSON.stringify(profile)}\n`)
+    process.stderr.write(`dsh-oc-tui: invalid profile name ${JSON.stringify(profile)}\n`)
     process.exit(1)
   }
   const setupCommand = findOnPath('dsh') !== undefined
@@ -204,11 +204,11 @@ function main() {
 
   const child = launchDsh(profile, forwarded)
   if (child === undefined) {
-    process.stderr.write(`dsh-tui: could not find dsh or npx on PATH — install ${DSH_PACKAGE} first\n`)
+    process.stderr.write(`dsh-oc-tui: could not find dsh or npx on PATH — install ${DSH_PACKAGE} first\n`)
     process.exit(1)
   }
   child.on('error', (error) => {
-    process.stderr.write('dsh-tui: failed to launch dsh: ' + error.message + '\n')
+    process.stderr.write('dsh-oc-tui: failed to launch dsh: ' + error.message + '\n')
     process.exit(1)
   })
   child.on('exit', (code, signal) => {
