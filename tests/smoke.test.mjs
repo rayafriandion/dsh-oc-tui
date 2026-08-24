@@ -1,12 +1,12 @@
 // Standalone smoke tests for the deepseek-harness-tui pure modules.
 // Run: node tests/smoke.test.mjs  (no dsh environment required)
-import { decodeKey } from "../lib/term.js"
-import { App, THEME, noteFromContext } from "../lib/ui.js"
+import { decodeKey, Screen, makeStyle, Terminal } from "../lib/term.js"
+import { App, THEME, noteFromContext, inputRows, cursorAtVisual } from "../lib/ui.js"
 import { InterruptState } from "../lib/interrupt.js"
 import { SessionMetrics } from "../lib/metrics.js"
-import { loadProviderSettings, loadWebSettings, saveWebSetting } from "../lib/web-settings.js"
+import { SETTINGS_MENU, loadModelSettings, loadProviderModels, loadWebSettings, saveWebSetting } from "../lib/web-settings.js"
 import { renderMarkdown } from "../lib/markdown.js"
-import { displayWidth, wrapText, roughTokens, truncateWidth, contentText, timeString, toolSummary } from "../lib/util.js"
+import { displayWidth, wrapText, roughTokens, truncateWidth, contentText, timeString, toolSummary, detectImageMediaType, imageMediaTypeFromName, decodeDataUrl, localImagePath } from "../lib/util.js"
 
 let failed = 0
 const eq = (name, actual, expected) => {
@@ -24,6 +24,20 @@ eq("wrapText", wrapText("a b c d e", 5), ["a b c", "d e"])
 eq("contentText includes reasoning", contentText([{ type: "reasoning", text: "hidden" }, { type: "text", text: "visible" }]), "hiddenvisible")
 eq("contentText skips reasoning", contentText([{ type: "reasoning", text: "hidden" }, { type: "text", text: "visible" }], { skipReasoning: true }), "visible")
 eq("timeString carries full date", /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(timeString(0)), true)
+eq("image detect png", detectImageMediaType(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])), "image/png")
+eq("image detect jpeg", detectImageMediaType(Buffer.from([0xff, 0xd8, 0xff, 0xe0])), "image/jpeg")
+eq("image detect gif", detectImageMediaType(Buffer.from([0x47, 0x49, 0x46, 0x38, 0x39, 0x61])), "image/gif")
+eq("image detect webp", detectImageMediaType(Buffer.from([0x52, 0x49, 0x46, 0x46, 0, 0, 0, 0, 0x57, 0x45, 0x42, 0x50])), "image/webp")
+eq("image detect text returns null", detectImageMediaType(Buffer.from("hello world")), null)
+eq("image media type from name", imageMediaTypeFromName("photo.JPEG?x=1"), "image/jpeg")
+eq("image media type from name webp", imageMediaTypeFromName("/a/b/c.webp"), "image/webp")
+eq("image media type from name non-image", imageMediaTypeFromName("notes.txt"), null)
+eq("decode data url", decodeDataUrl("data:image/png;base64,iVBORw0KGgo="), { mediaType: "image/png", data: Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]) })
+eq("decode data url non-image", decodeDataUrl("data:text/plain;base64,aGk="), null)
+eq("local image path plain", localImagePath("C:\\pics\\a.png"), "C:\\pics\\a.png")
+eq("local image path quoted", localImagePath('"/tmp/my image.gif"'), "/tmp/my image.gif")
+eq("local image path file uri", localImagePath("file:///C:/pics/a.jpg"), "C:/pics/a.jpg")
+eq("local image path non-image", localImagePath("C:\\notes.txt"), null)
 
 // ---- tool summaries ----
 eq("toolSummary read", toolSummary("read", '{"file_path":"/a/b.txt"}'), "read /a/b.txt")
@@ -50,10 +64,19 @@ eq("Ctrl+Enter LF", decodeKey(Buffer.from([0x0a])), { key: { name: "enter", ctrl
 eq("Alt+Enter legacy", decodeKey(Buffer.from([0x1b, 0x0d])), { key: { name: "enter", shift: true }, consumed: 2 })
 eq("Ctrl+comma CSI-u", decodeKey(Buffer.from("\x1b[44;5u")), { key: { name: ",", ctrl: true }, consumed: 7 })
 eq("mouse left down", decodeKey(Buffer.from("\x1b[<0;12;7M")), { key: { name: "mouse", mouse: { x: 11, y: 6, button: "left", action: "down", shift: false, alt: false, ctrl: false } }, consumed: 10 })
+eq("mouse hover motion", decodeKey(Buffer.from("\x1b[<35;12;7M")), { key: { name: "mouse", mouse: { x: 11, y: 6, button: "none", action: "move", shift: false, alt: false, ctrl: false } }, consumed: 11 })
+eq("mouse drag motion", decodeKey(Buffer.from("\x1b[<32;12;7M")), { key: { name: "mouse", mouse: { x: 11, y: 6, button: "left", action: "move", shift: false, alt: false, ctrl: false } }, consumed: 11 })
+eq("mouse release", decodeKey(Buffer.from("\x1b[<0;12;7m")), { key: { name: "mouse", mouse: { x: 11, y: 6, button: "left", action: "up", shift: false, alt: false, ctrl: false } }, consumed: 10 })
 eq("mouse wheel up", decodeKey(Buffer.from("\x1b[<64;3;4M")), { key: { name: "mouse", mouse: { x: 2, y: 3, button: "wheel", action: "wheel-up", shift: false, alt: false, ctrl: false } }, consumed: 10 })
 eq("X10 wheel up", decodeKey(Buffer.from([0x1b, 0x5b, 0x4d, 0x60, 44, 39])), { key: { name: "mouse", mouse: { x: 11, y: 6, button: "wheel", action: "wheel-up", shift: false, alt: false, ctrl: false } }, consumed: 6 })
 eq("partial mouse buffered", decodeKey(Buffer.from("\x1b[<0;12")), null)
 eq("partial X10 buffered", decodeKey(Buffer.from([0x1b, 0x5b, 0x4d, 0x60])), null)
+eq("bracketed paste text", decodeKey(Buffer.from("\x1b[200~hello world\x1b[201~")), { key: { name: "paste", data: Buffer.from("hello world") }, consumed: 23 })
+eq("bracketed paste image bytes", decodeKey(Buffer.concat([Buffer.from("\x1b[200~"), Buffer.from([0x89, 0x50, 0x4e, 0x47]), Buffer.from("\x1b[201~")])), { key: { name: "paste", data: Buffer.from([0x89, 0x50, 0x4e, 0x47]) }, consumed: 16 })
+eq("partial bracketed paste buffered", decodeKey(Buffer.from("\x1b[200~abc")), null)
+eq("osc52 clipboard reply base64", decodeKey(Buffer.from("\x1b]52;c;aGVsbG8=\x07")), { key: { name: "clipboard", data: Buffer.from("hello") }, consumed: 16 })
+eq("osc52 clipboard reply ST terminator", decodeKey(Buffer.from("\x1b]52;c;aGk=\x1b\\")), { key: { name: "clipboard", data: Buffer.from("hi") }, consumed: 13 })
+eq("partial osc52 buffered", decodeKey(Buffer.from("\x1b]52;c;aGk=")), null)
 
 // ---- markdown ----
 const theme = {
@@ -141,7 +164,15 @@ const fakeCredentials = {
 }
 const fakeLlm = {
   listProviders() { return [{ id: "first", name: "First" }, { id: "second", name: "Second" }] },
+  // `listModels` only covers registered adapters and returns a narrow set;
+  // `discoverModels` is the configuration-surface API that returns the full
+  // advertised catalog (including models the user has not saved yet).
   async listModels(provider) { return provider === "first" ? [{ provider, id: "one", name: "One" }] : [{ provider, id: "two", name: "Two" }, { provider, id: "three", name: "Three" }] },
+  async discoverModels(settingsNs, request) {
+    if (request.provider === "first") return [{ id: "one" }, { id: "extra-one" }]
+    if (request.provider === "second") return [{ id: "two" }, { id: "three" }, { id: "four" }, { id: "five" }]
+    return []
+  },
   async resolveModelInfo(provider, model) {
     if (provider === "first" && model === "one") {
       return { context: 128000, defaultMaxTokens: 4096, reasoning: { defaultEffort: "high", efforts: [{ id: "off", name: "off" }, { id: "high", name: "high" }, { id: "max", name: "max" }] } }
@@ -152,6 +183,9 @@ const fakeLlm = {
     return [
       { provider: "first", displayName: "First", settingsNs: "llm-pi-ai", settingsPath: ["providers", "first"] },
       { provider: "second", displayName: "Second", settingsNs: "llm-pi-ai", settingsPath: ["providers", "second"], declared: true },
+      // A provider the system knows about but the user never added must stay
+      // hidden from the Model tab.
+      { provider: "unadded", displayName: "Unadded preset", settingsNs: "llm-pi-ai", settingsPath: ["providers", "unadded"] },
     ]
   },
 }
@@ -166,35 +200,77 @@ const fakeCtx = {
 }
 const shared = await loadWebSettings(fakeCtx)
 ok("WebUI namespaces registered", sections.has("ui-theme") && sections.has("locale") && sections.has("ui-conversation"))
-ok("shared settings loaded", shared.items.some((item) => item.label === "Default model" && item.value === "one"))
+ok("main settings loaded", shared.items.some((item) => item.label === "Busy Enter"))
+ok("model items moved to the Model tab", !shared.items.some((item) => item.label === "Default model" || item.label === "Default provider" || item.field === "reasoningEffort"))
 ok("manage sessions setting", shared.items.some((item) => item.kind === "manage-sessions" && item.label === "Manage sessions"))
 ok("new session setting", shared.items.some((item) => item.kind === "new-session" && item.label === "New session"))
+eq("main tab headers", shared.items.filter((item) => item.kind === "header").map((item) => item.label).join(","), "General,Sessions,System")
+eq("settings menu is Main then Model", SETTINGS_MENU.map((entry) => entry.id).join(","), "main,model")
+ok("main tab carries the left menu", Array.isArray(shared.menu) && shared.menu.map((entry) => entry.label).join(",") === "Main,Model" && shared.menuIndex === 0)
 const presetItem = shared.items.find((item) => item.ns === "agent-presets")
 ok("default agent preset is a list choice", presetItem && presetItem.kind === "agent-preset" && Array.isArray(presetItem.options) && presetItem.options.length === 2 && presetItem.value === "catgirl-ptc")
 await saveWebSetting(fakeCtx, fakeSettings, presetItem, "default")
 eq("default agent preset persisted", sections.get("agent-presets").default, "default")
-const effortItem = shared.items.find((item) => item.field === "reasoningEffort")
-ok("reasoning effort is a list menu", effortItem && effortItem.kind === "effort" && Array.isArray(effortItem.options) && effortItem.options.length === 3 && effortItem.value === "high")
+ok("provider config hint stays in main", !shared.items.some((item) => item.kind === "provider") && shared.items.some((item) => item.kind === "provider-config-info"))
+ok("web-only appearance/language hidden in TUI", !shared.items.some((item) => item.label === "General · Appearance") && !shared.items.some((item) => item.label === "General · Language"))
+
+// ---- Model tab: merged provider + model settings ----
+const modelTab = await loadModelSettings(fakeCtx)
+ok("model tab carries the left menu", modelTab.menu.map((entry) => entry.label).join(",") === "Main,Model" && modelTab.menuIndex === 1 && modelTab.title === "Model")
+ok("default provider choice", modelTab.items.some((item) => item.kind === "default-provider" && item.label === "Default provider" && item.value === "first"))
+ok("default model options come from saved provider models", modelTab.items.some((item) => item.kind === "default-model" && item.label === "Default model" && item.value === "one" && Array.isArray(item.options) && item.options.includes("one") && !item.options.includes("extra-one")))
+const effortItem = modelTab.items.find((item) => item.field === "reasoningEffort")
+ok("reasoning is a list menu", effortItem && effortItem.kind === "effort" && effortItem.label === "Reasoning" && Array.isArray(effortItem.options) && effortItem.options.length === 3 && effortItem.value === "high")
 const originalModelSettings = structuredClone(sections.get("agent-default-model"))
 sections.set("agent-default-model", { ...originalModelSettings, reasoningEffort: "unsupported-old-model-level" })
-const unsupportedEffortShared = await loadWebSettings(fakeCtx)
-const unsupportedEffortItem = unsupportedEffortShared.items.find((item) => item.field === "reasoningEffort")
-eq("unsupported stored effort falls back to current model default", unsupportedEffortItem.value, "high")
+const unsupportedModelTab = await loadModelSettings(fakeCtx)
+eq("unsupported stored effort falls back to current model default", unsupportedModelTab.items.find((item) => item.field === "reasoningEffort").value, "high")
 sections.set("agent-default-model", originalModelSettings)
 await saveWebSetting(fakeCtx, fakeSettings, effortItem, "max")
 eq("reasoning effort persisted", sections.get("agent-default-model").reasoningEffort, "max")
-ok("provider config hidden", !shared.items.some((item) => item.kind === "provider") && shared.items.some((item) => item.kind === "provider-config-info"))
-ok("web-only appearance/language hidden in TUI", !shared.items.some((item) => item.label === "General · Appearance") && !shared.items.some((item) => item.label === "General · Language"))
-const modelItem = shared.items.find((item) => item.field === "model")
+// Merged provider blocks: URL / API key / Models live under each provider.
+ok("provider blocks listed", modelTab.items.some((item) => item.kind === "header" && item.label === "First") && modelTab.items.some((item) => item.kind === "header" && item.label === "Second"))
+ok("unadded preset providers hidden", !modelTab.items.some((item) => item.kind === "header" && item.label === "Unadded preset"))
+const urlItem = modelTab.items.find((item) => item.label === "Provider URL")
+ok("provider URL merged into Model tab", urlItem && urlItem.kind === "path" && urlItem.value === "https://first.test")
+const keyItem = modelTab.items.find((item) => item.label === "Provider API key")
+ok("provider API key merged into Model tab", keyItem && keyItem.kind === "secret" && keyItem.value.includes("configured"))
+const modelsRow = modelTab.items.find((item) => item.kind === "provider-models")
+ok("provider models row", modelsRow && modelsRow.label === "Models" && modelsRow.providerId === "first" && modelsRow.value.includes("1"))
+ok("stored models listed under provider", modelTab.items.some((item) => item.kind === "provider-model" && item.label === "one" && item.indent === 1))
+ok("default model marked in provider list", modelTab.items.find((item) => item.kind === "provider-model" && item.modelId === "one")?.value === "default")
+await saveWebSetting(fakeCtx, fakeSettings, keyItem, "new-secret")
+eq("provider credential persisted", storedCredentials.get("FIRST_API_KEY"), "new-secret")
+await saveWebSetting(fakeCtx, fakeSettings, urlItem, "https://changed.test")
+eq("provider path persisted", sections.get("llm-pi-ai").providers.first.baseURL, "https://changed.test")
+const imageInputItem = modelTab.items.find((item) => item.kind === "input-modalities")
+ok("pi-ai provider exposes default image input", imageInputItem && imageInputItem.options.includes("text + image"))
+await saveWebSetting(fakeCtx, fakeSettings, imageInputItem, "text + image")
+eq("provider image input persisted", sections.get("llm-pi-ai").providers.first.defaultInput, ["text", "image"])
+// A listed model becomes the default route for its provider.
+const listedModel = modelTab.items.find((item) => item.kind === "provider-model" && item.modelId === "one")
+await saveWebSetting(fakeCtx, fakeSettings, listedModel, "one")
+eq("listed model sets default model", sections.get("agent-default-model").model, "one")
+eq("listed model sets default provider", sections.get("agent-default-model").provider, "first")
+const modelItem = modelTab.items.find((item) => item.kind === "default-model")
 await saveWebSetting(fakeCtx, fakeSettings, modelItem, "gpt-5.6-luna")
 eq("shared settings persisted", sections.get("agent-default-model").model, "gpt-5.6-luna")
-const providerPage = await loadProviderSettings(fakeCtx, "first")
-ok("provider settings loaded", providerPage.items.some((item) => item.kind === "secret" && item.value.includes("configured")) && providerPage.items.some((item) => item.label === "Base URL"))
-await saveWebSetting(fakeCtx, fakeSettings, providerPage.items.find((item) => item.kind === "secret"), "new-secret")
-eq("provider credential persisted", storedCredentials.get("FIRST_API_KEY"), "new-secret")
-await saveWebSetting(fakeCtx, fakeSettings, providerPage.items.find((item) => item.label === "Base URL"), "https://changed.test")
-eq("provider path persisted", sections.get("llm-pi-ai").providers.first.baseURL, "https://changed.test")
+
+// ---- auto-fetched model picker ----
+const picker = await loadProviderModels(fakeCtx, "second")
+ok("picker auto-fetches the full provider catalog", picker.items.filter((item) => item.kind === "model-toggle").map((item) => item.modelId).join(",") === "two,three,four,five")
+ok("picker marks only the saved selection", picker.items.filter((item) => item.kind === "model-toggle" && ["two", "three"].includes(item.modelId)).every((item) => item.checked === true && item.value === "[x]") && picker.items.filter((item) => item.kind === "model-toggle" && ["four", "five"].includes(item.modelId)).every((item) => item.checked === false && item.value === "[ ]"))
+ok("picker title names the provider", picker.title.includes("Second"))
+const toggleTwo = picker.items.find((item) => item.modelId === "two")
+await saveWebSetting(fakeCtx, fakeSettings, toggleTwo, "off")
+eq("model toggle removes from provider models", sections.get("llm-pi-ai").providers.second.models.map((entry) => entry.id), ["three"])
+const picker2 = await loadProviderModels(fakeCtx, "second")
+const twoAgain = picker2.items.find((item) => item.modelId === "two")
+ok("picker reflects the saved state", twoAgain && twoAgain.checked === false && twoAgain.value === "[ ]")
+await saveWebSetting(fakeCtx, fakeSettings, twoAgain, "on")
+eq("model toggle adds back to provider models", sections.get("llm-pi-ai").providers.second.models.map((entry) => entry.id).sort().join(","), "three,two")
 const refreshedShared = await loadWebSettings(fakeCtx)
+const refreshedModelTab = await loadModelSettings(fakeCtx)
 
 // ---- App render ----
 const fakeTerm = { cols: 100, rows: 30, on() {} }
@@ -204,6 +280,7 @@ const titleRendered = titleApp.render().cells.map((r) => r.map((c) => c.ch).join
 ok("title screen", titleRendered.includes("DeepSeek Harness") && titleRendered.includes("D:/Projects/example"))
 ok("title git branch", titleRendered.includes("git: main"))
 ok("title settings hint", titleRendered.includes("Ctrl+P") && titleApp.sessionId === "")
+ok("title hint advertises Tab thinking without effort word", titleRendered.includes("Tab thinking") && !titleRendered.toLowerCase().includes("effort"))
 
 // Entering the welcome screen must drop the previous session's title.
 const staleTitleApp = new App(fakeTerm)
@@ -260,11 +337,47 @@ ok("bottom actions removed", !app.hitRegions.some((region) => region.kind === "n
 ok("no session mouse target in transcript", !app.hitRegions.some((region) => region.kind === "session"))
 const composerRegion = app.hitRegions.find((region) => region.kind === "composer")
 ok("mouse composer target", composerRegion && app.placeInputCursor(composerRegion.x + 2, composerRegion.composerTop + 1) && app.inputCursor === 0)
-app.openSettings(refreshedShared.items)
+// Pasted images render as orange [Image N] chips plus a multimodal hint row.
+const imageApp = new App(fakeTerm)
+imageApp.setSession({ id: "img", title: "Test" })
+imageApp.inputText = "look at [Image 1] and [Image 2]"
+imageApp.inputCursor = imageApp.inputText.length
+imageApp.inputImages = [
+  { status: "ready", ref: { attachmentId: "sha256:aaa" }, mediaType: "image/png", label: "Image 1" },
+  { status: "ready", ref: { attachmentId: "sha256:bbb" }, mediaType: "image/jpeg", label: "Image 2" },
+]
+const imageScreen = imageApp.render()
+const imageRendered = imageScreen.cells.map((r) => r.map((c) => c.ch).join("")).join(NL2)
+ok("image hint row appears", imageRendered.includes("deepseek-v4-flash-vision-exp"))
+ok("image marker text intact", imageRendered.includes("[Image 1]") && imageRendered.includes("[Image 2]"))
+ok("image marker chip uses orange background", imageScreen.cells.some((row) => row.some((c) => c.ch === "[" && c.style?.bg === THEME.imageChipBg)))
+app.openSettings(refreshedShared.items, { title: refreshedShared.title, subtitle: refreshedShared.subtitle, menu: refreshedShared.menu, menuIndex: refreshedShared.menuIndex })
 const settingsRendered = app.render().cells.map((r) => r.map((c) => c.ch).join("")).join(NL2)
 ok("settings overlay", settingsRendered.includes("Settings") && settingsRendered.includes("Shared with DeepSeek Harness WebUI"))
-ok("settings values", settingsRendered.includes("Default model") && settingsRendered.includes("gpt-5.6-luna"))
-ok("mouse settings targets", app.hitRegions.some((region) => region.kind === "settings-item" && region.settingsIndex === 0))
+ok("settings left menu rendered", settingsRendered.includes("Main") && settingsRendered.includes("Model") && settingsRendered.includes("MENU"))
+ok("settings menu hit targets", app.hitRegions.some((region) => region.kind === "settings-menu" && region.menuIndex === 0) && app.hitRegions.some((region) => region.kind === "settings-menu" && region.menuIndex === 1))
+ok("main tab keeps general settings", settingsRendered.includes("Busy Enter"))
+ok("main tab drops model settings", !settingsRendered.includes("Default model"))
+// Grouped settings: section headers render as their own rows and the
+// selection / hit regions never rest on them.
+ok("settings groups rendered", settingsRendered.includes("GENERAL") && settingsRendered.includes("SESSIONS") && settingsRendered.includes("SYSTEM") && !settingsRendered.includes("MODELS"))
+ok("settings items are grouped", refreshedShared.items.filter((item) => item.kind === "header").map((item) => item.label).join(",") === "General,Sessions,System")
+ok("selection skips headers", app.settingsItems[app.settingsSelection]?.kind !== "header" && app.settingsSelection === refreshedShared.items.findIndex((item) => item.kind !== "header"))
+ok("header rows carry no hit region", !app.hitRegions.some((region) => region.kind === "settings-item" && app.settingsItems[region.settingsIndex]?.kind === "header"))
+ok("mouse settings targets", app.hitRegions.some((region) => region.kind === "settings-item" && region.settingsIndex === app.settingsSelection))
+app.moveSettingsSelection(-1)
+ok("wrap skips headers upward", app.settingsItems[app.settingsSelection]?.kind !== "header")
+app.setSettingsSelection(0)
+ok("setSettingsSelection steps off headers", app.settingsItems[app.settingsSelection]?.kind !== "header")
+ok("setting labels are concise without separators", shared.items.every((item) => !String(item.label).includes("\u00b7")))
+ok("renamed setting labels", shared.items.some((item) => item.label === "Busy Enter") && shared.items.some((item) => item.label === "Default preset") && shared.items.some((item) => item.label === "Permission preset") && shared.items.some((item) => item.label === "Provider API config"))
+ok("settings arrow hint removed", !refreshedShared.subtitle && !settingsRendered.includes("changes"))
+// Model tab: the merged provider + model settings with the menu on the left.
+app.openSettings(refreshedModelTab.items, { title: refreshedModelTab.title, subtitle: refreshedModelTab.subtitle, menu: refreshedModelTab.menu, menuIndex: refreshedModelTab.menuIndex })
+const modelRendered = app.render().cells.map((r) => r.map((c) => c.ch).join("")).join(NL2)
+ok("model tab shows merged settings", modelRendered.includes("Default model") && modelRendered.includes("Provider URL") && modelRendered.includes("Provider API key") && modelRendered.includes("Models"))
+ok("model tab shows default model value", modelRendered.includes("gpt-5.6-luna"))
+ok("model tab footer mentions Tab menu", modelRendered.includes("Tab menu"))
 
 // Focus follows the cursor: hovering a row moves the selection there, and
 // re-hovering the same row still refocuses it after the selection moved away
@@ -285,6 +398,70 @@ hoverApp.settingsSelection = 0
 ok("re-hover same row refocuses", hoverApp.hoverFocus(hoverRows[1].x + 1, hoverRows[1].y) && hoverApp.settingsSelection === 1)
 ok("hover next row moves focus", hoverApp.hoverFocus(hoverRows[2].x + 1, hoverRows[2].y) && hoverApp.settingsSelection === 2)
 
+// ---- mouse text selection (left-drag select, right-click copy) ----
+const selApp = new App(fakeTerm)
+selApp.setSession({ id: "t1", title: "Test" })
+selApp.addUser("hello world")
+selApp.startAssistant()
+selApp.streamChunk({ type: "text-delta", text: "selectable answer text" })
+selApp.finalizeAssistant()
+const selScreen = selApp.render()
+const selRows = selScreen.cells.map((r) => r.map((c) => c.ch).join(""))
+const answerY = selRows.findIndex((r) => r.includes("selectable answer text"))
+ok("selection target row rendered", answerY >= 0)
+const answerRow = selRows[answerY]
+const wordX = answerRow.indexOf("selectable")
+// Single-row drag selects exactly the covered cells.
+selApp.startTextSelection(wordX, answerY)
+selApp.updateTextSelection(wordX + "selectable".length - 1, answerY)
+eq("single-row drag selects exact text", selApp.selectionText(), "selectable")
+// The highlight is painted with the selection background.
+const hiScreen = selApp.render()
+ok("selection highlight painted", hiScreen.cells[answerY].some((c) => c.style?.bg === THEME.selection))
+// Reverse drag (right -> left) normalizes to the same text.
+selApp.startTextSelection(wordX + "selectable answer".length - 1, answerY)
+selApp.updateTextSelection(wordX, answerY)
+eq("reverse drag selects same text", selApp.selectionText(), "selectable answer")
+// Multi-row drag: first row from the start column, last row to the end column.
+const userY = selRows.findIndex((r) => r.includes("hello world"))
+const helloX = selRows[userY].indexOf("hello")
+selApp.startTextSelection(helloX, userY)
+selApp.updateTextSelection(wordX + "selectable".length - 1, answerY)
+const multiSel = selApp.selectionText().split(NL2)
+eq("multi-row selection first line", multiSel[0], "hello world")
+eq("multi-row selection last line", multiSel.at(-1), "  selectable")
+// Wide runes: continuation cells are skipped, CJK survives the copy intact.
+const cjkApp = new App(fakeTerm)
+cjkApp.setSession({ id: "t1", title: "Test" })
+cjkApp.addUser("中文内容abc")
+const cjkRows = cjkApp.render().cells.map((r) => r.map((c) => c.ch).join(""))
+const cjkY = cjkRows.findIndex((r) => r.includes("中文内容abc"))
+const cjkX = cjkRows[cjkY].indexOf("中")
+cjkApp.startTextSelection(cjkX, cjkY)
+cjkApp.updateTextSelection(cjkX + 10, cjkY)
+eq("wide-rune selection intact", cjkApp.selectionText(), "中文内容abc")
+// Clearing drops the highlight again.
+ok("clearTextSelection reports and clears", selApp.clearTextSelection() === true && selApp.textSelection === null && !selApp.textSelectionDragging)
+ok("selection highlight cleared", !selApp.render().cells[answerY].some((c) => c.style?.bg === THEME.selection))
+// Clipboard write: OSC 52 with the base64 payload, empty input refused.
+let oscOut = ""
+const clipTerm = new Terminal({
+  input: { isTTY: false, on() {}, off() {}, resume() {}, pause() {} },
+  output: { isTTY: false, columns: 80, rows: 24, write: (s) => { oscOut += s }, on() {}, off() {} },
+})
+ok("copyToClipboard emits OSC 52 write", clipTerm.copyToClipboard("hello") === true && oscOut.includes("\x1b]52;c;" + Buffer.from("hello").toString("base64") + "\x1b\\"))
+eq("copyToClipboard refuses empty text", clipTerm.copyToClipboard(""), false)
+// CJK must travel as UTF-8 base64, never a locale code page — the Windows
+// clipboard fallback and the terminal both decode the same bytes to the same
+// string, so non-ASCII selections survive the round trip.
+let cjkOscOut = ""
+const cjkClipTerm = new Terminal({
+  input: { isTTY: false, on() {}, off() {}, resume() {}, pause() {} },
+  output: { isTTY: false, columns: 80, rows: 24, write: (s) => { cjkOscOut += s }, on() {}, off() {} },
+})
+cjkClipTerm.copyToClipboard("中文内容")
+ok("CJK copy encodes UTF-8 base64", cjkOscOut.includes("\x1b]52;c;" + Buffer.from("中文内容", "utf8").toString("base64") + "\x1b\\"))
+
 // Toast lives on the bottom status row, horizontally centered.
 const toastApp = new App(fakeTerm)
 toastApp.toast = { text: "saved to DSH settings", level: "info" }
@@ -300,6 +477,31 @@ cursorScreen.inputText = "hello"
 cursorScreen.inputCursor = 5
 const cursorRendered = cursorScreen.render()
 ok("cursor parked at input caret", cursorRendered.cursorY > 0 && cursorRendered.cursorX > 2 && cursorRendered.cursorY < 30)
+
+// Vertical caret movement across composer rows (Up/Down keep the column,
+// clamping to shorter rows; wrap rows count the same as explicit newlines).
+{
+  const caretText = "line one" + NL2 + "line two" + NL2 + "line three"
+  const caretW = 40
+  const caretMid = inputRows(caretText, 12, caretW) // middle of "line two"
+  ok("caret row/col resolved", caretMid.cursorRow === 1 && caretMid.cursorCol === 3)
+  eq("caret up keeps column", cursorAtVisual(caretText, caretW, 0, caretMid.cursorCol), 3)
+  eq("caret down keeps column", cursorAtVisual(caretText, caretW, 2, caretMid.cursorCol), 21)
+  eq("caret down past last row lands at end", cursorAtVisual(caretText, caretW, 5, 0), caretText.length)
+  // Wrapped rows: "abcdefghij" at width 4 wraps into abcd / efgh / ij.
+  const wrapText = "abcdefghij"
+  const wrapMid = inputRows(wrapText, 5, 4) // 'f' on the second visual row
+  ok("wrap rows tracked", wrapMid.cursorRow === 1 && wrapMid.cursorCol === 1 && wrapMid.rows.length === 3)
+  eq("caret up across wrap rows", cursorAtVisual(wrapText, 4, 0, 1), 1)
+  eq("caret down clamps to short last row", cursorAtVisual(wrapText, 4, 2, 1), 9)
+  // Layout exposes the same composer width the renderer wraps with.
+  const caretApp = new App(fakeTerm)
+  caretApp.setSession({ id: "t1", title: "Test" })
+  caretApp.inputText = caretText
+  caretApp.inputCursor = 12
+  const caretLayout = caretApp._layout()
+  ok("layout carries composer width + visual", caretLayout.composerWidth >= 20 && caretLayout.visual.cursorRow === 1 && caretLayout.visual.cursorCol === 3)
+}
 
 // Thinking box: collapsed by default once streaming finishes, clickable to expand.
 const thinkApp = new App(fakeTerm)
@@ -456,6 +658,51 @@ ok("running tool shows flowing spinner", toolRow && SPINNER.some((ch) => toolRow
 animApp.updateTool("c1", { status: "ok", result: "done" })
 ok("animation stops when tool finishes", !animApp.hasAnimation())
 
+// Running composer border: the flat yellow frame becomes a flowing gold
+// marching-ants frame (several gold tones around the perimeter, advancing
+// over time, with the warning gold still the dominant color).
+{
+  const borderApp = new App(fakeTerm)
+  borderApp.setSession({ id: "t1", title: "Test" })
+  const idleScreen = borderApp.render()
+  const idleTopRow = idleScreen.cells.find((row) => row.some((cell) => cell.ch === "╭"))
+  const idleDashColors = new Set(idleTopRow.filter((cell) => cell.ch === "─").map((cell) => cell.style?.fg))
+  eq("idle composer border is flat", idleDashColors.size, 1)
+  ok("idle composer border uses theme border color", [...idleDashColors].every((c) => c === THEME.border))
+
+  borderApp.setStatus("running")
+  const realNow = Date.now
+  let fakeNow = 1_000_000
+  Date.now = () => fakeNow
+  const mixHex = (a, b, t) => "#" + [0, 2, 4].map((i) => Math.round(parseInt(a.slice(i, i + 2), 16) + (parseInt(b.slice(i, i + 2), 16) - parseInt(a.slice(i, i + 2), 16)) * t).toString(16).padStart(2, "0")).join("")
+  const golds = new Set([THEME.warning, THEME.warningDim, mixHex(THEME.warning, "ffffff", 0.5)])
+  try {
+    const flowScreen = borderApp.render()
+    const topIdx = flowScreen.cells.findIndex((row) => row.some((cell) => cell.ch === "╭"))
+    const flowTopRow = flowScreen.cells[topIdx]
+    const flowColors = new Set(flowTopRow.filter((cell) => cell.ch === "─").map((cell) => cell.style?.fg))
+    ok("running border flows with several gold tones", flowColors.size >= 2)
+    ok("running border keeps the warning gold", flowColors.has(THEME.warning) && [...flowColors].every((c) => c !== THEME.border))
+    ok("running border stays in the gold family", [...flowColors].every((c) => golds.has(c)))
+    const sideRow = flowScreen.cells[topIdx + 1]
+    ok("running side borders flow", sideRow.some((cell) => cell.ch === "│" && golds.has(cell.style?.fg)))
+    // One 80ms step advances the marching-ants phase, so the tone sequence
+    // along the top edge shifts even though nothing else changed.
+    const before = flowTopRow.filter((c) => c.ch === "─").map((c) => c.style?.fg).join(",")
+    fakeNow += 80
+    const afterScreen = borderApp.render()
+    const afterTopRow = afterScreen.cells[afterScreen.cells.findIndex((row) => row.some((cell) => cell.ch === "╭"))]
+    const after = afterTopRow.filter((c) => c.ch === "─").map((c) => c.style?.fg).join(",")
+    ok("running border advances over time", before !== after)
+  } finally {
+    Date.now = realNow
+  }
+  borderApp.setStatus("idle")
+  const settledScreen = borderApp.render()
+  const settledTopRow = settledScreen.cells.find((row) => row.some((cell) => cell.ch === "╭"))
+  ok("border settles back to static when idle", settledTopRow.filter((cell) => cell.ch === "─").every((cell) => cell.style?.fg === THEME.border))
+}
+
 // Streaming thinking header carries the flowing spinner too.
 const spinThink = new App(fakeTerm)
 spinThink.setSession({ id: "t1", title: "Test" })
@@ -499,6 +746,41 @@ msgApp.toggleThinking(msgBlock)
 const msgExpanded = msgApp.render().cells.map((r) => r.map((c) => c.ch).join("")).join(NL2)
 ok("reasoning visible when expanded", msgExpanded.includes("private chain of thought"))
 
+// ---- background normalization -------------------------------------------
+// Every rendered cell carries an explicit background: fg-only styles
+// (markdown text, indents, row tail fills) are normalized onto the themed
+// canvas so nothing falls back to the terminal's default (black) background.
+{
+  const bgApp = new App(fakeTerm)
+  bgApp.setSession({ id: "t1", title: "Test" })
+  bgApp.addUser("hello")
+  const bgBlock = bgApp.ensureAssistantBlock(Date.now())
+  bgBlock.text = "plain **bold** and `code` words"
+  bgBlock.streaming = false
+  bgBlock.rev++
+  const bgScreen = bgApp.render()
+  let missing = 0
+  for (const row of bgScreen.cells) {
+    for (const cell of row) {
+      if (!cell.style?.bg) missing++
+    }
+  }
+  eq("every cell carries an explicit background", missing, 0)
+  ok("markdown text sits on the canvas background", bgScreen.cells.some((row) => row.some((cell) => cell.ch === "p" && cell.style?.fg === THEME.text && cell.style?.bg === THEME.background)))
+  ok("code spans keep their own background", bgScreen.cells.some((row) => row.some((cell) => cell.ch === "c" && cell.style?.bg === THEME.codeBg)))
+  // The engine helper itself: null styles and fg-only styles get the default,
+  // explicit backgrounds survive.
+  const plain = new Screen(4, 2)
+  plain.text(0, 0, "ab", makeStyle({ fg: "ffffff" }))
+  plain.text(0, 1, "cd")
+  plain.defaultBackground("0a0e18")
+  ok("defaultBackground fills null and fg-only styles", plain.cells[0][0].style.bg === "0a0e18" && plain.cells[1][0].style.bg === "0a0e18" && plain.cells[1][0].style.fg === null)
+  const kept = new Screen(2, 1)
+  kept.set(0, 0, "x", makeStyle({ fg: "ffffff", bg: "111a2c" }))
+  kept.defaultBackground("0a0e18")
+  ok("defaultBackground keeps explicit backgrounds", kept.cells[0][0].style.bg === "111a2c")
+}
+
 // ---- reasoning-effort slider ----
 const sliderApp = new App(fakeTerm)
 sliderApp.setSession({ id: "t1", title: "Test" })
@@ -508,10 +790,13 @@ const sliderMidScreen = sliderApp.render()
 const sliderRendered = sliderMidScreen.cells.map((r) => r.map((c) => c.ch).join("")).join(NL2)
 const sliderMidRow = sliderMidScreen.cells.find((row) => row.some((cell) => cell.ch === "█"))
 const sliderMidRowText = sliderMidRow?.map((cell) => cell.ch).join("") ?? ""
-ok("effort slider label", sliderRendered.includes("effort"))
+ok("effort word removed from slider screen", !sliderRendered.toLowerCase().includes("effort"))
+ok("slider hint mentions Tab", sliderRendered.includes("Tab"))
 ok("effort slider current name", sliderRendered.includes("high"))
 ok("effort slider row keeps current value", sliderMidRowText.includes("high"))
 ok("effort slider real range hint", sliderRendered.includes("off") && sliderRendered.includes("max"))
+const midComposerRow = sliderMidScreen.cells.find((row) => row.some((cell) => cell.ch === "╭"))?.map((cell) => cell.ch).join("") ?? ""
+ok("composer label drops effort word", midComposerRow.includes("high") && !midComposerRow.includes("effort"))
 ok("effort slider not animated at mid strength", !sliderApp.hasAnimation())
 sliderApp.setEffortSlider({ levels: [{ id: "off", name: "off" }, { id: "high", name: "high" }, { id: "max", name: "max" }], current: "max" })
 ok("effort slider animates at max", sliderApp.hasAnimation())
@@ -545,7 +830,7 @@ boolApp.setSession({ id: "t1", title: "Test" })
 boolApp.setEffortSlider({ levels: [{ id: "off", name: "off" }, { id: "high", name: "high" }], current: "off" })
 boolApp.effortSliderVisible = true
 const boolRendered = boolApp.render().cells.map((r) => r.map((c) => c.ch).join("")).join(NL2)
-ok("boolean slider shows exactly two ends", boolRendered.includes("effort") && boolRendered.includes("off") && boolRendered.includes("high"))
+ok("boolean slider shows exactly two ends", boolRendered.includes("off") && boolRendered.includes("high") && !boolRendered.includes("effort"))
 ok("boolean slider not animated at off", !boolApp.hasAnimation())
 // A partial-range provider (off/high/max) must not map to a full none..max.
 const partialApp = new App(fakeTerm)

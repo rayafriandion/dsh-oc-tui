@@ -15,7 +15,7 @@
         sidebar: true
         showReasoning: true
 
-    # The preset roster behind the Settings -> Agent · Default preset list.
+    # The preset roster behind the Settings -> Default preset list.
     # Sessions keep composing process-wide from the base (single-session TUI);
     # this row only makes the roster and its settings namespace available.
     - id: agent-presets
