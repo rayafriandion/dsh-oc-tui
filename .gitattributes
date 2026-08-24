@@ -1,0 +1,4 @@
+# Keep the shell installer a valid bash script on every platform.
+*.sh text eol=lf
+# PowerShell scripts follow the Windows convention.
+*.ps1 text eol=crlf

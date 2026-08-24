@@ -107,6 +107,27 @@ Harness human commands (`/compact`, `/goal`, ...) are forwarded to `ctx.commands
 
 ## Install
 
+### Automatic install script
+
+The repo ships one-command installers for Linux/macOS and Windows. They check Node.js >= 22, ensure `pnpm` is present, install the plugin from GitHub into the `tui` profile, and can also install the `dsh-oc-tui` launcher globally.
+
+```sh
+# Linux / macOS
+curl -fsSL https://raw.githubusercontent.com/rayafriandion/dsh-oc-tui/main/install.sh | bash
+
+# Windows (PowerShell)
+powershell -ExecutionPolicy Bypass -Command "iwr https://raw.githubusercontent.com/rayafriandion/dsh-oc-tui/main/install.ps1 -OutFile install.ps1; & .\install.ps1"
+```
+
+From a checkout you can run `./install.sh` (Linux/macOS) or `.\install.ps1` (Windows) directly. Add `--launcher` / `-Launcher` to also put the `dsh-oc-tui` command on PATH:
+
+```sh
+./install.sh --launcher   # Linux/macOS
+.\install.ps1 -Launcher   # Windows
+```
+
+Other options: `--local` (`-Local`) installs the current checkout instead of GitHub, `--source <spec>` (`-Source <spec>`) uses a custom source (e.g. `dsh-oc-tui` once published to npm, or a tarball path), and `--profile <name>` (`-Profile <name>`) targets a non-default profile.
+
 ### From the npm registry
 
 ```sh
@@ -218,6 +239,8 @@ lib/web-settings.js shared WebUI settings projection
 lib/markdown.js     markdown -> styled lines
 lib/util.js         text/display helpers
 bin/dsh-oc-tui.js  convenience launcher for `dsh --profile tui`
+install.sh          one-command installer (Linux/macOS)
+install.ps1         one-command installer (Windows)
 cordis.patch.yml    bundle patch layer (TUI rows)
 docs/用户手册.md      Chinese user manual
 tests/smoke.test.mjs  standalone smoke tests
