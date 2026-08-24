@@ -1,4 +1,4 @@
-# deepseek-harness-tui
+# dsh-oclike
 
 An opencode-inspired **terminal UI (TUI)** for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness), shipped as a dsh profile app plugin. It boots a chat client inside the dsh process: it creates/resumes agents through `ctx.agents`, renders the durable `session/event` stream (user messages, streaming assistant tokens, tool cards, todo lists), routes human input back via `agent.followup()`, and answers `approval/request` prompts inline.
 
@@ -49,7 +49,7 @@ dsh --profile tui --no-sidebar          # start without the sidebar
 dsh --profile tui --help                # the TUI's own flags
 ```
 
-The stock dsh launcher only hardcodes `web` as a bare subcommand alias, so the profile flag is the intended shape for custom surfaces. If you want the exact string `dsh tui`, add a one-line shell alias (for example `doskey tui=dsh --profile tui $*` in CMD).
+The stock dsh launcher only hardcodes `web` and `plugin` as bare subcommands, so the profile flag is the intended shape for custom surfaces. If you want the exact string `dsh tui`, add a one-line shell alias (for example `doskey tui=dsh --profile tui $*` in CMD).
 
 ### `dsh-tui` convenience launcher
 
@@ -116,7 +116,7 @@ dsh plugin --profile tui add deepseek-harness-tui
 ### From a local checkout or tarball
 
 ```sh
-dsh plugin --profile tui add ./deepseek-harness-tui
+dsh plugin --profile tui add ./dsh-oclike
 # or a packed tarball:
 dsh plugin --profile tui add ./deepseek-harness-tui-0.1.0.tgz
 ```
@@ -126,7 +126,7 @@ dsh plugin --profile tui add ./deepseek-harness-tui-0.1.0.tgz
 ### From GitHub
 
 ```sh
-dsh plugin --profile tui add github:you/deepseek-harness-tui
+dsh plugin --profile tui add github:you/dsh-oclike
 ```
 
 This package ships plain JavaScript, so a git install needs no build step. pnpm ≥ 10 may still require allowlisting the git dependency's package key under `allowBuilds` in the profile's `pnpm-workspace.yaml` if a build step is ever added.
@@ -187,9 +187,9 @@ Then add to `$DSH_HOME/profiles/tui/cordis.patch.yml`:
 ```yaml
 - insert:
     - id: tui-startup
-      name: 'file:///D:/Projects/DeepSeekHarnessPlugins/deepseek-harness-tui/lib/startup.js'
+      name: 'file:///D:/Projects/DeepSeekHarnessPlugins/dsh-oclike/lib/startup.js'
     - id: tui-app
-      name: 'file:///D:/Projects/DeepSeekHarnessPlugins/deepseek-harness-tui/lib/index.js'
+      name: 'file:///D:/Projects/DeepSeekHarnessPlugins/dsh-oclike/lib/index.js'
       config:
         sidebar: true
         showReasoning: true
