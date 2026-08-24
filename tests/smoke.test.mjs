@@ -1,4 +1,4 @@
-// Standalone smoke tests for the deepseek-harness-tui pure modules.
+// Standalone smoke tests for the dsh-oc-tui pure modules.
 // Run: node tests/smoke.test.mjs  (no dsh environment required)
 import { decodeKey, Screen, makeStyle, Terminal } from "../lib/term.js"
 import { App, THEME, noteFromContext, inputRows, cursorAtVisual } from "../lib/ui.js"

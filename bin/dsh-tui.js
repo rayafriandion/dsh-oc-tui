@@ -15,7 +15,7 @@ import { createRequire } from 'node:module'
 import { delimiter, dirname, join, resolve } from 'node:path'
 import { homedir } from 'node:os'
 
-const PACKAGE_NAME = 'deepseek-harness-tui'
+const PACKAGE_NAME = 'dsh-oc-tui'
 const DSH_PACKAGE = '@deepseek-ai/dsh'
 
 const manifest = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))

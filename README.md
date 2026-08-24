@@ -18,7 +18,7 @@ The UI follows a DeepSeek blue-white dark design language (brand blue `#4D6BFE` 
 
 ```sh
 # 1. One-time setup: create the tui profile and install this plugin into it.
-dsh plugin --profile tui add deepseek-harness-tui
+dsh plugin --profile tui add dsh-oc-tui
 
 # 2. Launch.
 dsh --profile tui
@@ -32,7 +32,7 @@ Verify the layer without booting:
 dsh --profile tui --dump-config
 ```
 
-The dump shows the `deepseek-harness-tui` bundle layer after `@deepseek-ai/dsh-base`.
+The dump shows the `dsh-oc-tui` bundle layer after `@deepseek-ai/dsh-base`.
 
 ## Launch
 
@@ -61,7 +61,7 @@ dsh-tui --profile mytui # boot a profile with a different name
 dsh-tui --help          # launcher help
 ```
 
-The launcher prefers an installed `dsh` on PATH and falls back to `npx --yes @deepseek-ai/dsh`. Install the bin globally with `npm install -g deepseek-harness-tui` (or run it from a local checkout with `node bin/dsh-tui.js`). Environment overrides:
+The launcher prefers an installed `dsh` on PATH and falls back to `npx --yes @deepseek-ai/dsh`. Install the bin globally with `npm install -g dsh-oc-tui` (or run it from a local checkout with `node bin/dsh-tui.js`). Environment overrides:
 
 | Variable | Effect |
 | --- | --- |
@@ -110,7 +110,7 @@ Harness human commands (`/compact`, `/goal`, ...) are forwarded to `ctx.commands
 ### From the npm registry
 
 ```sh
-dsh plugin --profile tui add deepseek-harness-tui
+dsh plugin --profile tui add dsh-oc-tui
 ```
 
 ### From a local checkout or tarball
@@ -118,7 +118,7 @@ dsh plugin --profile tui add deepseek-harness-tui
 ```sh
 dsh plugin --profile tui add ./dsh-oc-tui
 # or a packed tarball:
-dsh plugin --profile tui add ./deepseek-harness-tui-0.1.0.tgz
+dsh plugin --profile tui add ./dsh-oc-tui-0.1.0.tgz
 ```
 
 `dsh plugin` anchors relative paths to your invoking directory before forwarding to pnpm.
@@ -134,14 +134,14 @@ This package ships plain JavaScript, so a git install needs no build step. pnpm 
 ### What the install does
 
 1. `dsh plugin` initializes `$DSH_HOME/profiles/tui` on first use (`@deepseek-ai/dsh-base` plus an empty user patch layer).
-2. pnpm installs `deepseek-harness-tui` into the profile's `node_modules`.
-3. `dsh` appends `deepseek-harness-tui` to `dsh.profile.bundles` because the package declares `dsh.bundle.patch`; the bundle patch inserts the `tui-startup` and `tui-app` rows.
-4. `dsh --profile tui` composes `@deepseek-ai/dsh-base` + `deepseek-harness-tui` and boots the UI.
+2. pnpm installs `dsh-oc-tui` into the profile's `node_modules`.
+3. `dsh` appends `dsh-oc-tui` to `dsh.profile.bundles` because the package declares `dsh.bundle.patch`; the bundle patch inserts the `tui-startup` and `tui-app` rows.
+4. `dsh --profile tui` composes `@deepseek-ai/dsh-base` + `dsh-oc-tui` and boots the UI.
 
 To remove:
 
 ```sh
-dsh plugin --profile tui remove deepseek-harness-tui
+dsh plugin --profile tui remove dsh-oc-tui
 ```
 
 ## Settings

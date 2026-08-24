@@ -1,16 +1,16 @@
-# deepseek-harness-tui bundle patch: the terminal UI over the dsh-base layer.
+# dsh-oc-tui bundle patch: the terminal UI over the dsh-base layer.
 # Rows reference this package by name, so the package must be resolvable from
 # the profile — the official path is `dsh plugin --profile tui add
-# deepseek-harness-tui`, which installs it into the profile's node_modules and
+# dsh-oc-tui`, which installs it into the profile's node_modules and
 # appends this bundle. The zero-install development bootstrap may instead
 # restate these rows in the profile's own patch with absolute module paths.
 
 - insert:
     - id: tui-startup
-      name: 'deepseek-harness-tui/startup'
+      name: 'dsh-oc-tui/startup'
 
     - id: tui-app
-      name: 'deepseek-harness-tui'
+      name: 'dsh-oc-tui'
       config:
         sidebar: true
         showReasoning: true
