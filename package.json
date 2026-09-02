@@ -1,6 +1,6 @@
 {
   "name": "dsh-oc-tui",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "type": "module",
   "description": "A terminal UI (TUI) for DeepSeek Harness — an opencode-inspired chat client that boots as a dsh profile app plugin.",
   "license": "LGPL-3.0-or-later",
@@ -36,7 +36,8 @@
     "@deepseek-ai/dsh-llm": "*",
     "@deepseek-ai/dsh-session": "*",
     "@deepseek-ai/dsh-session-persistence": "*",
-    "@deepseek-ai/dsh-user-approval": "*"
+    "@deepseek-ai/dsh-user-approval": "*",
+    "@deepseek-ai/schemastery": "*"
   },
   "peerDependenciesMeta": {
     "@deepseek-ai/cordis": { "optional": false },
@@ -48,7 +49,8 @@
     "@deepseek-ai/dsh-llm": { "optional": true },
     "@deepseek-ai/dsh-session": { "optional": true },
     "@deepseek-ai/dsh-session-persistence": { "optional": true },
-    "@deepseek-ai/dsh-user-approval": { "optional": true }
+    "@deepseek-ai/dsh-user-approval": { "optional": true },
+    "@deepseek-ai/schemastery": { "optional": false }
   },
   "dsh": {
     "bundle": {
@@ -56,7 +58,6 @@
     }
   },
   "dependencies": {
-    "@deepseek-ai/schemastery": "^0.1.0",
     "commander": "^15.0.0"
   }
 }
