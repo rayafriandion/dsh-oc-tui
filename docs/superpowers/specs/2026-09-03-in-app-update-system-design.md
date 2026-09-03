@@ -124,7 +124,9 @@ profile: tui
   为 `available` 时该行值用 `THEME.warning`（金色）高亮，与版本列表里 `latest`
   的绿色（`success`）语义区分：前者是"建议升级"，后者是"目标版本"；
 - `update-versions`：Enter → 打开版本列表子视图；
-- `update-check`：Enter → 重新执行检查（期间行值显示 spinner，其余行 disabled）。
+- `update-check`：Enter → 重新执行检查；期间设置页 subtitle 行显示 spinner
+  （新增 `App.settingsBusy` 字段驱动，`hasAnimation()` 在 busy 时返回 true 以复用
+  现有 80ms 动画重绘循环），完成后刷新整页。
 
 `Startup check` 复用现有 `choice` kind + `saveWebSetting` 的 `settings.mutate` 通道
 （见第 6 节），零新代码。
@@ -168,8 +170,8 @@ profile 里 TUI 是 `file:`/本地路径安装（读 profile `package.json` 的
 
 ### 5.4 安装过程
 
-- 安装期间确认行显示 spinner（现有 `seg.anim === 'spinner'` 机制），页面其余操作
-  可继续（Esc 离开不取消安装，安装作为后台 promise 继续）；
+- 安装期间设置页 subtitle 显示 spinner + 安装目标（`App.settingsBusy`），页面其余
+  操作可继续（Esc 离开不取消安装，安装作为后台 promise 继续）；
 - 完成后：toast `dsh 0.1.1 installed — restart to apply`（或 TUI 同理），若 Update
   页仍开着则自动刷新数据；
 - 失败：toast error + stderr 尾部摘要（最后 ~3 行，去掉 ANSI 后截断）；
