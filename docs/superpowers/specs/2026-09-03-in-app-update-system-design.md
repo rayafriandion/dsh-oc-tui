@@ -121,7 +121,8 @@ profile: tui
 新增 item kind（沿用 label/value 双列渲染）：
 
 - `update-info`：静态信息行（Installed / Latest tag / Status），不可触发；Status
-  为 `available` 时用主题高亮色（绿色/黄色，同 toast warn 级别）；
+  为 `available` 时该行值用 `THEME.warning`（金色）高亮，与版本列表里 `latest`
+  的绿色（`success`）语义区分：前者是"建议升级"，后者是"目标版本"；
 - `update-versions`：Enter → 打开版本列表子视图；
 - `update-check`：Enter → 重新执行检查（期间行值显示 spinner，其余行 disabled）。
 
@@ -141,6 +142,24 @@ profile: tui
 0.1.0-rc.7  (installed)
 …
 ```
+
+**颜色强调（用户已确认）**：`latest` / `next` / `(installed)` 三个标识使用不同
+主题色，一眼区分频道与当前版本。为此版本行使用专用 item kind
+`update-version`（含 `version` / `tag` / `installed` 字段），在 `_paintSettings`
+加专门渲染分支，分段着色：
+
+| 标识 | 颜色（THEME） | 语义 |
+|---|---|---|
+| `[latest]` | `success`（绿） | 官方推荐的稳定频道 |
+| `[next]` | `info`（青） | pre-release 频道 |
+| `(installed)` | `secondary`（浅蓝） + 行首版本号同色 | 当前正在运行的版本 |
+| 其他 dist-tag（如 `[alpha]`） | `textMuted` | 次要频道不抢焦点 |
+| 无标记的版本行 | 现有默认样式 | — |
+
+选中行仍保留现有选中底色（`backgroundPanel`）与 `›` 指示，颜色只作用于
+标记段与 installed 版本号段，不与选中态冲突。Update 主页（5.2）的 Status 行
+在 `available` 状态下用 `warning` 高亮，与列表内的 `latest` 绿色语义呼应
+（"建议升级"用警示金、"目标版本"用成功绿）。
 
 Enter 某版本 → 现有 `settingsConfirm` y/n 内联确认，文案包含目标版本号；若当前
 profile 里 TUI 是 `file:`/本地路径安装（读 profile `package.json` 的
