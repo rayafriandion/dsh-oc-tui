@@ -153,15 +153,16 @@ function resolveDshEntry(dshExecutable) {
 }
 
 /** Spawn one resolved command, using node for npm shims on Windows when possible. */
-function spawnCommand(command, args) {
+function spawnCommand(command, args, extraEnv = {}) {
+  const env = Object.keys(extraEnv).length > 0 ? { ...process.env, ...extraEnv } : process.env
   if (process.platform === 'win32') {
     const entry = resolveDshEntry(command)
-    if (entry !== undefined) return spawn(process.execPath, [entry, ...args], { stdio: 'inherit' })
+    if (entry !== undefined) return spawn(process.execPath, [entry, ...args], { stdio: 'inherit', env })
     if (/\.(cmd|bat)$/i.test(command)) {
-      return spawn('cmd.exe', ['/d', '/s', '/c', command, ...args], { stdio: 'inherit' })
+      return spawn('cmd.exe', ['/d', '/s', '/c', command, ...args], { stdio: 'inherit', env })
     }
   }
-  return spawn(command, args, { stdio: 'inherit' })
+  return spawn(command, args, { stdio: 'inherit', env })
 }
 
 /** The npx fallback: prefer the npm CLI bundled with this Node, then PATH. */
@@ -175,10 +176,13 @@ function npxCommand() {
 
 function launchDsh(profile, forwarded) {
   const dshArgs = ['--profile', profile, ...forwarded]
+  // Tell the plugin which profile it is booting under so its update manager can
+  // install/switch the TUI into the right profile without re-guessing.
+  const env = { DSH_TUI_BOOT_PROFILE: profile }
   const dshExecutable = findOnPath('dsh')
-  if (dshExecutable !== undefined) return spawnCommand(dshExecutable, dshArgs)
+  if (dshExecutable !== undefined) return spawnCommand(dshExecutable, dshArgs, env)
   const npx = npxCommand()
-  if (npx !== undefined) return spawnCommand(npx.command, [...npx.args, '--yes', DSH_PACKAGE, ...dshArgs])
+  if (npx !== undefined) return spawnCommand(npx.command, [...npx.args, '--yes', DSH_PACKAGE, ...dshArgs], env)
   return undefined
 }
 

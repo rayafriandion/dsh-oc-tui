@@ -1,10 +1,13 @@
 // Standalone smoke tests for the dsh-oc-tui pure modules.
 // Run: node tests/smoke.test.mjs  (no dsh environment required)
+import { fileURLToPath } from "node:url"
+import { dirname, join } from "node:path"
 import { decodeKey, Screen, makeStyle, Terminal } from "../lib/term.js"
 import { App, THEME, noteFromContext, inputRows, cursorAtVisual } from "../lib/ui.js"
 import { InterruptState } from "../lib/interrupt.js"
 import { SessionMetrics } from "../lib/metrics.js"
 import { SETTINGS_MENU, loadModelSettings, loadProviderModels, loadWebSettings, saveWebSetting } from "../lib/web-settings.js"
+import { DSH_PACKAGE, TUI_PACKAGE, parseRegistryView, isPrerelease, coreSegments, latestStable, updateStatus, compareVersions, buildUpdateItems, buildVersionItems, resolveActiveProfile, stderrSummary, dshLockEntries, installResultFrom, deferredInstallSpec, installMarkerPath, readInstallMarker, writeInstallMarker } from "../lib/updates.js"
 import { renderMarkdown } from "../lib/markdown.js"
 import { displayWidth, wrapText, roughTokens, truncateWidth, contentText, timeString, toolSummary, detectImageMediaType, imageMediaTypeFromName, decodeDataUrl, localImagePath } from "../lib/util.js"
 
@@ -142,6 +145,7 @@ const fakeSettings = {
     if (ns === "ui-theme") sections.set(ns, { preference: "system" })
     if (ns === "locale") sections.set(ns, {})
     if (ns === "ui-conversation") sections.set(ns, { busyEnter: "queue" })
+    if (ns === "tui-updates") sections.set(ns, { startupCheck: "on" })
     userSections.set(ns, structuredClone(sections.get(ns)))
     revisions.set(ns, 0)
   },
@@ -205,18 +209,19 @@ ok("model items moved to the Model tab", !shared.items.some((item) => item.label
 ok("manage sessions setting", shared.items.some((item) => item.kind === "manage-sessions" && item.label === "Manage sessions"))
 ok("new session setting", shared.items.some((item) => item.kind === "new-session" && item.label === "New session"))
 eq("main tab headers", shared.items.filter((item) => item.kind === "header").map((item) => item.label).join(","), "General,Sessions,System")
-eq("settings menu is Main then Model", SETTINGS_MENU.map((entry) => entry.id).join(","), "main,model")
-ok("main tab carries the left menu", Array.isArray(shared.menu) && shared.menu.map((entry) => entry.label).join(",") === "Main,Model" && shared.menuIndex === 0)
+eq("settings menu is Main, Model, Update", SETTINGS_MENU.map((entry) => entry.id).join(","), "main,model,update")
+ok("main tab carries the left menu", Array.isArray(shared.menu) && shared.menu.map((entry) => entry.label).join(",") === "Main,Model,Update" && shared.menuIndex === 0)
 const presetItem = shared.items.find((item) => item.ns === "agent-presets")
 ok("default agent preset is a list choice", presetItem && presetItem.kind === "agent-preset" && Array.isArray(presetItem.options) && presetItem.options.length === 2 && presetItem.value === "catgirl-ptc")
 await saveWebSetting(fakeCtx, fakeSettings, presetItem, "default")
 eq("default agent preset persisted", sections.get("agent-presets").default, "default")
 ok("provider config hint stays in main", !shared.items.some((item) => item.kind === "provider") && shared.items.some((item) => item.kind === "provider-config-info"))
+ok("update manager entry in main", shared.items.some((item) => item.kind === "open-update" && item.label === "Update manager" && item.value === "Update tab"))
 ok("web-only appearance/language hidden in TUI", !shared.items.some((item) => item.label === "General · Appearance") && !shared.items.some((item) => item.label === "General · Language"))
 
 // ---- Model tab: merged provider + model settings ----
 const modelTab = await loadModelSettings(fakeCtx)
-ok("model tab carries the left menu", modelTab.menu.map((entry) => entry.label).join(",") === "Main,Model" && modelTab.menuIndex === 1 && modelTab.title === "Model")
+ok("model tab carries the left menu", modelTab.menu.map((entry) => entry.label).join(",") === "Main,Model,Update" && modelTab.menuIndex === 1 && modelTab.title === "Model")
 ok("default provider choice", modelTab.items.some((item) => item.kind === "default-provider" && item.label === "Default provider" && item.value === "first"))
 ok("default model options come from saved provider models", modelTab.items.some((item) => item.kind === "default-model" && item.label === "Default model" && item.value === "one" && Array.isArray(item.options) && item.options.includes("one") && !item.options.includes("extra-one")))
 const effortItem = modelTab.items.find((item) => item.field === "reasoningEffort")
@@ -271,6 +276,182 @@ await saveWebSetting(fakeCtx, fakeSettings, twoAgain, "on")
 eq("model toggle adds back to provider models", sections.get("llm-pi-ai").providers.second.models.map((entry) => entry.id).sort().join(","), "three,two")
 const refreshedShared = await loadWebSettings(fakeCtx)
 const refreshedModelTab = await loadModelSettings(fakeCtx)
+
+// ---- in-app update manager ----
+eq("update packages named", DSH_PACKAGE, "@deepseek-ai/dsh")
+eq("update tui package named", TUI_PACKAGE, "dsh-oc-tui")
+eq("parseRegistryView standard", parseRegistryView('{"versions":["0.1.0","0.1.1-rc.2"],"dist-tags":{"latest":"0.1.1-rc.2"}}'),
+  { versions: ["0.1.0", "0.1.1-rc.2"], distTags: { latest: "0.1.1-rc.2" } })
+eq("parseRegistryView versions string degrades", parseRegistryView('{"versions":"0.1.0"}'), { versions: ["0.1.0"], distTags: {} })
+eq("parseRegistryView missing fields", parseRegistryView("{}"), { versions: [], distTags: {} })
+eq("parseRegistryView malformed json", parseRegistryView("not json"), { versions: [], distTags: {} })
+eq("parseRegistryView ignores non-string tags", parseRegistryView('{"versions":["0.1.0"],"dist-tags":{"latest":1,"next":"0.2.0"}}'),
+  { versions: ["0.1.0"], distTags: { next: "0.2.0" } })
+eq("isPrerelease stable", isPrerelease("0.1.0"), false)
+eq("isPrerelease rc", isPrerelease("0.1.1-rc.2"), true)
+eq("isPrerelease build only", isPrerelease("0.1.0+build"), false)
+eq("coreSegments pads to three", coreSegments("0.1"), [0, 1, 0])
+eq("coreSegments strips pre and build", coreSegments("1.2.3-rc.1+build"), [1, 2, 3])
+eq("compareVersions multi-digit segment", compareVersions("0.10.0", "0.9.0") > 0, true)
+eq("compareVersions stable over pre", compareVersions("0.2.0", "0.2.0-rc.1") > 0, true)
+eq("compareVersions pre numeric", compareVersions("0.1.0-rc.8", "0.1.0-rc.7") > 0, true)
+eq("latestStable picks numeric max", latestStable(["0.9.0", "0.10.0", "0.10.0-rc.1"]), "0.10.0")
+eq("latestStable null when all pre", latestStable(["0.1.0-rc.6", "0.1.1-rc.2"]), null)
+eq("status available newer stable", updateStatus("0.1.0", { versions: ["0.1.0", "0.1.1"] }), { kind: "available", target: "0.1.1" })
+eq("status up to date", updateStatus("0.1.1", { versions: ["0.1.0", "0.1.1"] }), { kind: "up-to-date" })
+eq("status rc released as stable", updateStatus("0.2.0-rc.1", { versions: ["0.2.0", "0.2.0-rc.1"] }), { kind: "available", target: "0.2.0" })
+eq("status newer pre not prompted", updateStatus("0.1.2-rc.1", { versions: ["0.1.1", "0.1.2-rc.1"] }), { kind: "up-to-date" })
+eq("status all rc no stable", updateStatus("0.1.0-rc.6", { versions: ["0.1.0-rc.6", "0.1.1-rc.2"] }), { kind: "no-stable" })
+eq("status missing installed still targets stable", updateStatus(null, { versions: ["0.1.0"] }), { kind: "available", target: "0.1.0" })
+eq("stderrSummary strips ansi and takes last 3", stderrSummary("a\nb\n\x1b[31mc\x1b[0m\nd\n"), "b · c · d")
+const updateFixture = {
+  profile: "tui",
+  dsh: { found: true, installed: "0.1.0-rc.6", registry: { versions: ["0.1.0-rc.6", "0.1.1-rc.2"], distTags: { latest: "0.1.1-rc.2" } }, error: null },
+  tui: { installed: "0.1.1", registry: { versions: ["0.1.0", "0.1.1"], distTags: { latest: "0.1.0" } }, error: null },
+  startupCheck: "on",
+  startupCheckRevision: 0,
+  settingsWritable: true,
+  checking: false,
+  busy: false,
+}
+const updateItems = buildUpdateItems(updateFixture)
+ok("update page lists both packages", updateItems.some((item) => item.kind === "header" && item.label === "dsh (@deepseek-ai/dsh)") && updateItems.some((item) => item.kind === "header" && item.label === "dsh-oc-tui"))
+ok("update page names the active profile", updateItems.some((item) => item.kind === "update-info" && item.label === "profile" && item.value === "tui"))
+ok("update info rows carry installed + latest", updateItems.some((item) => item.kind === "update-info" && item.label === "Installed" && item.value === "0.1.0-rc.6") && updateItems.some((item) => item.kind === "update-info" && item.label === "Latest (npm tag)" && item.value === "0.1.1-rc.2"))
+const dshStatusItem = updateItems.find((item) => item.kind === "update-info" && item.label === "Status")
+eq("update dsh status no-stable", dshStatusItem.value, "No stable release — pick from Versions")
+eq("update status tone only when available", dshStatusItem.tone, undefined)
+ok("update tui up to date", updateItems.some((item) => item.kind === "update-info" && item.label === "Status" && item.value === "Up to date"))
+ok("update versions rows", updateItems.some((item) => item.kind === "update-versions" && item.pkg === "dsh") && updateItems.some((item) => item.kind === "update-versions" && item.pkg === "tui"))
+ok("update actions rows", updateItems.some((item) => item.kind === "update-check" && item.label === "Check now") && updateItems.some((item) => item.kind === "choice" && item.ns === "tui-updates" && item.field === "startupCheck" && item.options.length === 2))
+const availableFixture = structuredClone(updateFixture)
+availableFixture.tui.registry = { versions: ["0.1.1", "0.2.0"], distTags: { latest: "0.2.0" } }
+const availableStatus = buildUpdateItems(availableFixture).find((item) => item.kind === "update-info" && item.label === "Status" && item.value.startsWith("Update available"))
+eq("update available tone warning", availableStatus.tone, "warning")
+eq("update available names target", availableStatus.value, "Update available → 0.2.0")
+const versionItems = buildVersionItems({ versions: ["0.1.0-rc.7", "0.1.1-rc.2", "0.1.0-rc.8", "0.1.2-rc.1"], distTags: { latest: "0.1.1-rc.2", next: "0.1.2-rc.1" } }, "0.1.0-rc.7")
+eq("version items newest first", versionItems.map((item) => item.version), ["0.1.2-rc.1", "0.1.1-rc.2", "0.1.0-rc.8", "0.1.0-rc.7"])
+ok("version tags attached", versionItems[0].tags.includes("next") && versionItems[1].tags.includes("latest"))
+ok("version installed marker attached", versionItems.find((item) => item.version === "0.1.0-rc.7")?.installed === true)
+const tuiRoot = dirname(fileURLToPath(new URL("../package.json", import.meta.url)))
+const profileMatchFs = {
+  env: { DSH_HOME: "/home/u" },
+  homedir: () => "/home/u",
+  readdirSync() {
+    return [
+      { name: "a", isDirectory: () => true },
+      { name: "b", isDirectory: () => true },
+      { name: "file.txt", isDirectory: () => false },
+    ]
+  },
+  realpathSync(p) {
+    if (p === tuiRoot) return "/self"
+    if (String(p).endsWith(join("a", "node_modules", "dsh-oc-tui"))) return "/other"
+    if (String(p).endsWith(join("b", "node_modules", "dsh-oc-tui"))) return "/self"
+    return p
+  },
+}
+eq("resolveActiveProfile env priority", resolveActiveProfile({ ...profileMatchFs, env: { DSH_TUI_BOOT_PROFILE: "custom" } }), "custom")
+eq("resolveActiveProfile realpath match", resolveActiveProfile(profileMatchFs), "b")
+eq("resolveActiveProfile fallback", resolveActiveProfile({ env: { DSH_HOME: "/home/u" }, homedir: () => "/home/u", readdirSync() { throw new Error("nope") }, realpathSync() { throw new Error("nope") } }), "tui")
+
+// ---- update install safety (Windows native-DLL lock, silent npm hybrid tree) ----
+// A global npm install while any dsh process is running leaves a hybrid
+// 0.1.1/0.1.2 tree (memory-mapped sharp DLL blocks npm's retire/cleanup) —
+// while npm still exits 0. The updater must detect dsh processes before
+// installing, and must never trust the exit code alone.
+
+// dshLockEntries turns a tasklist/wmic table into process descriptors. The
+// launcher may resolve to dsh.cmd → "node dsh.cmd", and argv can contain
+// unquoted or backslashed paths — matching is by normalized fragment.
+const lockTable = [
+  "node.exe            8100 Console        1     11,000 K",
+  "node.exe            10604 Console       1     22,000 K",
+  "dsh.cmd             10604 Console       1     22,000 K",
+  "powershell.exe      9000 Console        1     30,000 K",
+]
+const lockCmdlines = {
+  8100: '"C:\\Program Files\\nodejs\\node.exe" "D:\\x\\node_modules\\@deepseek-ai\\dsh\\lib\\bin.js" web',
+  10604: 'node   "D:\\PackageManager\\npm-global\\node_modules\\@deepseek-ai\\dsh\\lib\\bin.js" --profile tui',
+  9000: 'powershell -NoProfile -Command Get-Process',
+}
+ok("lock entries detect every dsh bin.js process", (() => {
+  const entries = dshLockEntries(lockTable, (pid) => lockCmdlines[pid])
+  return entries.length === 2
+    && entries.every((entry) => entry.pid === 8100 || entry.pid === 10604)
+    && entries.every((entry) => entry.name === "node.exe" && entry.commandLine.includes("dsh\\lib\\bin.js"))
+})())
+ok("lock detection ignores self", dshLockEntries(lockTable, (pid) => lockCmdlines[pid], 8100).every((entry) => entry.pid !== 8100))
+ok("lock detection tolerates empty table", dshLockEntries([], () => "").length === 0)
+
+// installResultFrom: npm exit 0 is only trusted when the on-disk manifest
+// actually reports the requested version afterwards.
+eq("install result trusts matching manifest", installResultFrom({ code: 0, stderr: "" }, { version: "0.1.2-rc.1" }, "0.1.2-rc.1").kind, "installed")
+eq("install result flags silent hybrid tree", installResultFrom({ code: 0, stderr: "" }, { version: "0.1.1-rc.2" }, "0.1.2-rc.1").kind, "corrupt")
+eq("install result flags missing install", installResultFrom({ code: 0, stderr: "" }, null, "0.1.2-rc.1").kind, "corrupt")
+eq("install result flags version-less manifest", installResultFrom({ code: 0, stderr: "" }, {}, "0.1.2-rc.1").kind, "corrupt")
+eq("install result passes failure through", installResultFrom({ code: 1, stderr: "EPERM" }, { version: "0.1.2-rc.1" }, "0.1.2-rc.1").kind, "failed")
+eq("install result treats any non-zero exit as failed", installResultFrom({ code: 3, stderr: "boom" }, { version: "0.1.2-rc.1" }, "0.1.2-rc.1").kind, "failed")
+eq("install result treats timeout as failed", installResultFrom({ code: null, signal: "timeout", stderr: "" }, { version: "0.1.2-rc.1" }, "0.1.2-rc.1").kind, "failed")
+eq("install failure carries stderr", installResultFrom({ code: 1, stderr: "EPERM boom" }, null, "0.1.2-rc.1").stderr, "EPERM boom")
+ok("corrupt result tells user to repair", /repair|reinstall/i.test(installResultFrom({ code: 0, stderr: "" }, { version: "0.1.1-rc.2" }, "0.1.2-rc.1").reason))
+
+// deferredInstallSpec: the exit-time installer is a detached plain-node child
+// (`node -e <script> <parentPid> <npm…> <requested> <marker>`): it polls the
+// parent until it exits, runs the npm install, and records the outcome in the
+// marker file for the next boot to verify.
+const spec = deferredInstallSpec("0.1.2-rc.1", 4242, { command: "node", args: ["npm-cli.js"] }, "C:/Users/u/.dsh/tui-dsh-install.json")
+eq("deferred spec command passthrough", spec.command, "node")
+eq("deferred spec passes -e script first", spec.args[0], "-e")
+ok("deferred spec script spawns and records", spec.args[1].includes("child_process") && spec.args[1].includes("writeFileSync") && spec.args[1].includes("process.kill"))
+const specTail = spec.args.slice(2)
+eq("deferred spec argv order parent/npm/version/marker", JSON.stringify([specTail[0], specTail[1], specTail[2], specTail[specTail.length - 2], specTail[specTail.length - 1]]),
+  JSON.stringify(["4242", "node", "npm-cli.js", "0.1.2-rc.1", "C:/Users/u/.dsh/tui-dsh-install.json"]))
+ok("deferred spec npm args preserved", specTail.includes("install") && specTail.includes("-g") && specTail.includes("@deepseek-ai/dsh@0.1.2-rc.1"))
+eq("deferred spec detached and unrefed", JSON.stringify([spec.options.detached, spec.options.stdio, spec.options.windowsHide]), JSON.stringify([true, "ignore", true]))
+
+// The script reads argv from index 1 — with `node -e <script> A B`, the
+// script/-e do not occupy argv slots, so argv = [node, A, B] (slice(2) would
+// drop the parent pid). Regressed by the real-process E2E on 2026-09-04.
+ok("deferred script argv starts at index 1", spec.args[1].includes("process.argv.slice(1)"))
+
+// The marker lives in the harness home (DSH_HOME is already the .dsh root).
+ok("install marker path inside dsh home", /tui-dsh-install\.json$/.test(installMarkerPath()) && !/[\\/]\.dsh[\\/].*\.dsh/.test(installMarkerPath()))
+
+// Marker read/write round trip, with drain-on-read and malformed tolerance.
+const markerFs = {
+  files: {},
+  existsSync() { return "C:/m" in this.files },
+  readFileSync(p) { if (!(p in this.files)) throw new Error("no file"); return this.files[p] },
+  writeFileSync(p, text) { this.files[p] = text },
+  unlinkSync(p) { delete this.files[p] },
+}
+writeInstallMarker(markerFs, "C:/m", { requested: "0.1.2-rc.1", code: 0 })
+const roundTrip = readInstallMarker(markerFs, "C:/m")
+eq("marker round trip keeps requested and code", JSON.stringify([roundTrip.requested, roundTrip.code]), JSON.stringify(["0.1.2-rc.1", 0]))
+eq("marker drains on read", markerFs.existsSync(), false)
+eq("marker missing is null", readInstallMarker(markerFs, "C:/m"), null)
+markerFs.files["C:/m"] = "not json"
+eq("marker malformed tolerated and drained", readInstallMarker(markerFs, "C:/m"), null)
+eq("marker drained after malformed", markerFs.existsSync(), false)
+
+// A deferred install that failed (non-zero exit) surfaces as a note on the
+// dsh Status row, warning tone, without claiming the install is damaged.
+const noteFixture = structuredClone(updateFixture)
+noteFixture.dsh.note = "Deferred install failed (exit 1) — retry from Versions"
+const noteStatus = buildUpdateItems(noteFixture).find((item) => item.kind === "update-info" && item.label === "Status" && item.pkg === "dsh")
+eq("update status surfaces deferred failure note", noteStatus.value, "Deferred install failed (exit 1) — retry from Versions")
+eq("update status note tone is warning", noteStatus.tone, "warning")
+
+// buildUpdateItems: the dsh Status line warns when a global install is
+// already in the hybrid/corrupt state, so the user is pointed at repair
+// instead of being told "up to date".
+const corruptFixture = structuredClone(updateFixture)
+corruptFixture.dsh.corrupt = true
+const corruptStatus = buildUpdateItems(corruptFixture).find((item) => item.kind === "update-info" && item.label === "Status" && item.pkg === "dsh")
+eq("update status flags corrupt install", corruptStatus.value, "Install damaged — reinstall below")
+eq("update status corrupt tone is error", corruptStatus.tone, "error")
+ok("update status clean when not corrupt", !buildUpdateItems(updateFixture).some((item) => item.kind === "update-info" && item.label === "Status" && item.value === "Install damaged — reinstall below"))
 
 // ---- App render ----
 const fakeTerm = { cols: 100, rows: 30, on() {} }
@@ -378,6 +559,21 @@ const modelRendered = app.render().cells.map((r) => r.map((c) => c.ch).join(""))
 ok("model tab shows merged settings", modelRendered.includes("Default model") && modelRendered.includes("Provider URL") && modelRendered.includes("Provider API key") && modelRendered.includes("Models"))
 ok("model tab shows default model value", modelRendered.includes("gpt-5.6-luna"))
 ok("model tab footer mentions Tab menu", modelRendered.includes("Tab menu"))
+
+// Update version picker rows render their tag/installed markers inline.
+const versionRenderApp = new App(fakeTerm)
+versionRenderApp.openSettings(buildVersionItems({ versions: ["0.1.0-rc.8", "0.1.1-rc.2"], distTags: { latest: "0.1.1-rc.2" } }, "0.1.0-rc.8"), { title: "dsh-oc-tui · versions" })
+const versionRender = versionRenderApp.render().cells.map((r) => r.map((c) => c.ch).join("")).join(NL2)
+ok("version row renders tags", versionRender.includes("[latest]"))
+ok("version row renders installed marker", versionRender.includes("(installed)"))
+
+// The Update tab itself renders its check/switch entry points and the left menu.
+const updatePageApp = new App(fakeTerm)
+updatePageApp.openSettings(buildUpdateItems(updateFixture), { title: "Update", subtitle: "Enter select · installs need a restart to apply", menu: SETTINGS_MENU, menuIndex: 2 })
+const updatePageRender = updatePageApp.render().cells.map((r) => r.map((c) => c.ch).join("")).join(NL2)
+ok("update tab left menu shows Update", updatePageRender.includes("Update") && updatePageRender.includes("Main") && updatePageRender.includes("Model"))
+ok("update tab shows check-now entry", updatePageRender.includes("Check now"))
+ok("update tab shows version-switch entry", updatePageRender.includes("Versions") && updatePageRender.includes("Select version…"))
 
 // Focus follows the cursor: hovering a row moves the selection there, and
 // re-hovering the same row still refocuses it after the selection moved away

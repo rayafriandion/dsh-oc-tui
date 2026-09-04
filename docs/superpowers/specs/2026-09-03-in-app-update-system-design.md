@@ -216,3 +216,35 @@ profile 里 TUI 是 `file:`/本地路径安装（读 profile `package.json` 的
 - `README.md`：新增 "Update manager (Ctrl+P → Update)" 小节（能力、判定规则、
   启动检查开关、restart to apply 说明）；
 - `docs/用户手册.md`：对应中文小节。
+
+## 10. 修订：Windows 自更新安全（2026-09-04 事故后）
+
+**事故**：用户通过 Update 页把全局 dsh 从 0.1.1-rc.2 升到 0.1.2-rc.1 时，一个
+后台 `dsh web` 进程仍在运行。Windows 锁定其已加载的 sharp 原生 DLL
+（`libvips-cpp-8.18.3.dll`），npm 的"退役旧目录 → 解压新树 → 清理"流程在清理
+时 EPERM，**但 npm 仍 exit 0**。结果磁盘上是 0.1.1-rc.2 的 package.json 与
+0.1.2-rc.1 的 lib 代码混合的树（顶层 dsh、dsh-subagent、
+dsh-tool-subagent-control、typebox 均中招），下次启动报
+`State` / `./internal` 导出不存在。TUI 的更新器两处设计缺陷暴露：
+
+1. 直接在 dsh 进程运行时执行 `npm install -g`；
+2. 只看 npm 退出码，未校验安装结果。
+
+**修订后的行为**（`lib/updates.js` 新增，UI 接线在 `lib/index.js`）：
+
+| 场景 | 行为 |
+|---|---|
+| Windows 上安装/切换 dsh | 不再就地安装：确认后**延迟到当前 TUI 退出时执行**。spawn 一个 detached 的纯 node 子进程（`node -e` 内联脚本），轮询父进程 pid（上限 10 分钟，防 pid 复用卡死），父进程退出后执行 `npm install -g @deepseek-ai/dsh@<ver>`，退出码写入 `$DSH_HOME/tui-dsh-install.json`（marker） |
+| 下次打开 Update 页 | 读取并**删除** marker（drain-on-read，坏文件也归 null），结合当前磁盘版本分类：npm 失败 → Status 行金色 note `Deferred install failed (exit N)`；exit 0 但磁盘版本≠目标 → `corrupt` |
+| 任何直接 dsh 安装（非 Windows / 降级路径） | 安装后**重读磁盘 manifest 并与目标版本比对**：不一致（即静默损坏）→ toast `install corrupt` + 修复命令；npm 非零退出/超时一律 `failed`（退出码不再是唯一依据） |
+| 非 Windows 且有其他 dsh 进程在跑 | 拒绝安装并 toast 提示先关闭（`detectDshLocks`，PowerShell CIM 列出 node 进程命令行，匹配 `dsh\lib\bin.js` 片段，排除自身 pid） |
+| 安装已损坏（检测到混合树） | Status 行红色 `Install damaged — reinstall below`，指引重新安装 |
+
+新增导出：`dshLockEntries`（纯函数：tasklist 行 + cmdline 查询 → 进程列表）、
+`detectDshLocks`（Windows 实测）、`installResultFrom`（退出码 + manifest →
+installed/failed/corrupt 分类）、`deferredInstallSpec` / `spawnDeferredDshInstall`
+（延迟安装器 argv 构造与 spawn）、`installMarkerPath` / `readInstallMarker` /
+`writeInstallMarker`（marker 读写，drain-on-read）、`deferredInstallOutcome`
+（marker + 磁盘版本 → 分类）。测试全部为纯函数或注入 fs，真实进程 E2E 另行
+验证了 argv 解析（`node -e` 脚本从 `process.argv.slice(1)` 取参，slice(2) 会吃掉
+parentPid —— 该 bug 由 E2E 捕获并已加回归断言）与退出码透传。
