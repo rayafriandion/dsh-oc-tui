@@ -2,7 +2,7 @@
   "name": "dsh-oc-tui",
   "version": "0.1.2",
   "type": "module",
-  "description": "A terminal UI (TUI) for DeepSeek Harness — an opencode-inspired chat client that boots as a dsh profile app plugin.",
+  "description": "A terminal UI (TUI) for DeepSeek Harness — an opencode-inspired chat client that boots as a dsh profile app plugin. ｜ DeepSeek Harness 的终端界面（TUI），受 opencode 启发，以 dsh profile 应用插件形式启动。",
   "keywords": [
     "deepseek",
     "deepseek-harness",
