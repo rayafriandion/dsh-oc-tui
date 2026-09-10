@@ -2,7 +2,7 @@
 
 **A terminal UI for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)** — an opencode-inspired chat client that boots inside the `dsh` process as a profile app plugin.
 
-[![npm](https://img.shields.io/npm/v/dsh-oc-tui?label=npm&color=BF392B)](https://www.npmjs.com/package/dsh-oc-tui)
+[![npm latest](https://img.shields.io/npm/v/dsh-oc-tui?label=npm&color=BF392B)](https://www.npmjs.com/package/dsh-oc-tui)
 [![awesome-dsh-plugin](https://img.shields.io/badge/awesome--dsh--plugin-marketplace-BF392B)](https://awesome-dsh-plugin.com/zh/p/rayafriandion/dsh-oc-tui/)
 [![License: LGPL-3.0-or-later](https://img.shields.io/badge/license-LGPL--3.0--or--later-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%3E%3D22-339933.svg)](https://nodejs.org)
