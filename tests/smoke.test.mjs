@@ -3,13 +3,13 @@
 import { fileURLToPath } from "node:url"
 import { dirname, join } from "node:path"
 import { decodeKey, Screen, makeStyle, Terminal } from "../lib/term.js"
-import { App, THEME, noteFromContext, inputRows, cursorAtVisual } from "../lib/ui.js"
+import { App, THEME, noteFromContext, inputRows, cursorAtVisual, inboxMessageText } from "../lib/ui.js"
 import { InterruptState } from "../lib/interrupt.js"
 import { SessionMetrics } from "../lib/metrics.js"
 import { SETTINGS_MENU, loadModelSettings, loadProviderModels, loadWebSettings, saveWebSetting } from "../lib/web-settings.js"
 import { DSH_PACKAGE, TUI_PACKAGE, parseRegistryView, isPrerelease, coreSegments, latestStable, updateStatus, compareVersions, buildUpdateItems, buildVersionItems, resolveActiveProfile, stderrSummary, dshLockEntries, installResultFrom, deferredInstallSpec, installMarkerPath, readInstallMarker, writeInstallMarker } from "../lib/updates.js"
 import { renderMarkdown } from "../lib/markdown.js"
-import { displayWidth, wrapText, roughTokens, truncateWidth, contentText, timeString, toolSummary, detectImageMediaType, imageMediaTypeFromName, decodeDataUrl, localImagePath } from "../lib/util.js"
+import { displayWidth, wrapText, roughTokens, truncateWidth, contentText, timeString, toolSummary, detectImageMediaType, imageMediaTypeFromName, decodeDataUrl, localImagePath, runeWidth, userContentBlocks } from "../lib/util.js"
 
 let failed = 0
 const eq = (name, actual, expected) => {
@@ -41,6 +41,31 @@ eq("local image path plain", localImagePath("C:\\pics\\a.png"), "C:\\pics\\a.png
 eq("local image path quoted", localImagePath('"/tmp/my image.gif"'), "/tmp/my image.gif")
 eq("local image path file uri", localImagePath("file:///C:/pics/a.jpg"), "C:/pics/a.jpg")
 eq("local image path non-image", localImagePath("C:\\notes.txt"), null)
+
+// ---- composer image content ----
+// A stored reference must reach message content whole: a block reduced to its
+// id makes every later request on that session fail ("unreachable variant in
+// image extension", because the adapter reads `attachment.mediaType`).
+const storedRef = { attachmentId: "sha256:aaa", mediaType: "image/png", bytes: 68, width: 1, height: 1 }
+eq("image block keeps the complete stored reference",
+  userContentBlocks("look [Image 1]", [storedRef]),
+  [{ type: "text", text: "look " }, { type: "image", attachment: storedRef }])
+eq("image block reference is not narrowed to its id",
+  userContentBlocks("[Image 1]", [storedRef])[0].attachment, storedRef)
+eq("ordered text around two images",
+  userContentBlocks("a[Image 1]b[Image 2]c", [storedRef, { ...storedRef, attachmentId: "sha256:bbb", mediaType: "image/jpeg" }])
+    .map((block) => (block.type === "image" ? "[img " + block.attachment.mediaType + "]" : block.text)),
+  ["a", "[img image/png]", "b", "[img image/jpeg]", "c"])
+eq("partial reference degrades to literal marker text",
+  userContentBlocks("[Image 1]", [{ attachmentId: "sha256:aaa" }]),
+  [{ type: "text", text: "[Image 1]" }])
+eq("failed attachment marker survives as text",
+  userContentBlocks("see [Image 2]", [null]),
+  [{ type: "text", text: "see " }, { type: "text", text: "[Image 2]" }])
+eq("text-only submission keeps its text",
+  userContentBlocks("hello", []),
+  [{ type: "text", text: "hello" }])
+eq("empty submission has no blocks", userContentBlocks("", []), [])
 
 // ---- tool summaries ----
 eq("toolSummary read", toolSummary("read", '{"file_path":"/a/b.txt"}'), "read /a/b.txt")
@@ -1035,6 +1060,274 @@ partialApp.setEffortSlider({ levels: [{ id: "off", name: "off" }, { id: "high", 
 partialApp.effortSliderVisible = true
 const partialRendered = partialApp.render().cells.map((r) => r.map((c) => c.ch).join("")).join(NL2)
 ok("partial slider uses provider levels only", !partialRendered.includes("none") && !partialRendered.includes("low") && !partialRendered.includes("medium"))
+
+// ---- durable agent inbox (dsh 0.1.5 `agent/inbox/spliced`) ----------------
+// The reducer mirrors the host projector: standard splice coordinates over
+// `target`, a claim (removal with no outcome) owning the removed ids for
+// steering classification, and `outcome: 'canceled'` claiming nothing.
+const inboxMsg = (id, text) => ({ id, content: [{ type: "text", text }] })
+const inboxRender = (a) => a.render().cells.map((r) => r.map((c) => c.ch).join("")).join(NL2)
+
+const ibApp = new App(fakeTerm)
+ibApp.setSession({ id: "ib", title: "Inbox" })
+ok("inbox empty initially", ibApp.inbox.nextTurn.length === 0 && ibApp.inbox.nextStep.length === 0 && ibApp.inboxBlock === null)
+ok("inbox splice insert next-turn", ibApp.applyInboxSplice({ target: "next-turn", start: 0, inserted: [inboxMsg("m1", "queued one")] }) === true)
+eq("inbox holds the queued message", ibApp.inbox.nextTurn.map((m) => m.text), ["queued one"])
+ok("inbox splice insert next-step", ibApp.applyInboxSplice({ target: "next-step", start: 0, inserted: [inboxMsg("m2", "steer two")] }) === true)
+eq("inbox holds the steered message", ibApp.inbox.nextStep.map((m) => m.text), ["steer two"])
+ibApp.updateInboxBlock()
+ok("pending inbox renders a parked block", ibApp.blocks.length === 1 && ibApp.inboxBlock !== null)
+const ibCollapsed = inboxRender(ibApp)
+ok("pending header counts both kinds", ibCollapsed.includes("pending input") && ibCollapsed.includes("1 steering") && ibCollapsed.includes("1 queued"))
+ok("collapsed inbox hides message text", !ibCollapsed.includes("queued one"))
+
+// Clicking the box (through the shared note toggle) expands it in place.
+ibApp.toggleNote(ibApp.inboxBlock)
+const ibExpanded = inboxRender(ibApp)
+ok("expanded inbox lists both messages", ibExpanded.includes("queued one") && ibExpanded.includes("steer two"))
+ok("expanded inbox labels the kinds", ibExpanded.includes("steering") && ibExpanded.includes("queued"))
+ibApp.toggleNote(ibApp.inboxBlock)
+ok("inbox collapses again", ibApp.inboxBlock.expanded === false && !inboxRender(ibApp).includes("queued one"))
+
+// A turn-boundary claim drains next-step first, then one next-turn entry;
+// every removed id is that claim's steering batch.
+ok("claim drains next-step", ibApp.applyInboxSplice({ target: "next-step", start: 0, removedCount: 1, inserted: [] }) === true)
+ok("claim drains one next-turn", ibApp.applyInboxSplice({ target: "next-turn", start: 0, removedCount: 1, inserted: [] }) === true)
+eq("pending lists emptied by the claim", ibApp.inbox.nextStep.length + ibApp.inbox.nextTurn.length, 0)
+ok("claimed ids classify as steering", ibApp.consumeClaimed("m1") === true && ibApp.consumeClaimed("m2") === true)
+ok("claim classification is single-shot", ibApp.consumeClaimed("m1") === false)
+ok("unknown id is not steering", ibApp.consumeClaimed("nope") === false)
+ibApp.updateInboxBlock()
+ok("emptied inbox drops the block", ibApp.inboxBlock === null && ibApp.blocks.length === 0)
+
+// An ordinary removal carries outcome 'canceled' and is NOT a claim.
+const cancelApp = new App(fakeTerm)
+cancelApp.setSession({ id: "c", title: "Cancel" })
+cancelApp.applyInboxSplice({ target: "next-turn", start: 0, inserted: [inboxMsg("k1", "keep")] })
+cancelApp.applyInboxSplice({ target: "next-turn", start: 0, removedCount: 1, inserted: [], outcome: "canceled" })
+eq("canceled removal empties the list", cancelApp.inbox.nextTurn.length, 0)
+ok("canceled removal claims nothing", cancelApp.consumeClaimed("k1") === false)
+
+// In-place edit: one splice replaces a pending entry, keeping its position.
+const editApp = new App(fakeTerm)
+editApp.setSession({ id: "e", title: "Edit" })
+editApp.applyInboxSplice({ target: "next-turn", start: 0, inserted: [inboxMsg("x1", "first"), inboxMsg("x2", "second")] })
+editApp.applyInboxSplice({ target: "next-turn", start: 1, removedCount: 1, inserted: [inboxMsg("x3", "edited")] })
+eq("in-place edit replaces at position", editApp.inbox.nextTurn.map((m) => m.text), ["first", "edited"])
+
+// A malformed splice must be ignored, not corrupt the view.
+const badApp = new App(fakeTerm)
+badApp.setSession({ id: "b", title: "Bad" })
+badApp.applyInboxSplice({ target: "next-turn", start: 0, inserted: [inboxMsg("b1", "safe")] })
+ok("out-of-range splice ignored", badApp.applyInboxSplice({ target: "next-turn", start: 5, removedCount: 1, inserted: [] }) === false)
+ok("negative splice ignored", badApp.applyInboxSplice({ target: "next-turn", start: -1, removedCount: 1, inserted: [] }) === false)
+ok("unknown target ignored", badApp.applyInboxSplice({ target: "elsewhere", start: 0, inserted: [] }) === false)
+eq("view survives malformed splices", badApp.inbox.nextTurn.map((m) => m.text), ["safe"])
+
+// Attachment-only input still reads as queued work.
+eq("inbox text flattens image-only message", inboxMessageText({ id: "i", content: [{ type: "image" }] }), "[Image]")
+eq("inbox text joins multiple blocks", inboxMessageText({ id: "i", content: [{ type: "text", text: "a" }, { type: "text", text: "b" }] }), "a b")
+eq("inbox text handles empty message", inboxMessageText({ id: "i", content: [] }), "[empty message]")
+
+// The pending block always sits last: appending anything detaches it, and the
+// next fold re-parks it, so pending input never renders below newer output.
+const orderApp = new App(fakeTerm)
+orderApp.setSession({ id: "o", title: "Order" })
+orderApp.addUser("hello")
+orderApp.applyInboxSplice({ target: "next-turn", start: 0, inserted: [inboxMsg("o1", "later")] })
+orderApp.updateInboxBlock()
+ok("pending inbox parks at the end", orderApp.blocks[orderApp.blocks.length - 1] === orderApp.inboxBlock)
+orderApp.addSystem("a system line after the block")
+ok("append detaches the pending block", orderApp.blocks[orderApp.blocks.length - 1] !== orderApp.inboxBlock)
+orderApp.updateInboxBlock()
+ok("pending inbox is re-parked last", orderApp.blocks[orderApp.blocks.length - 1] === orderApp.inboxBlock)
+ok("pending inbox is never duplicated", orderApp.blocks.filter((b) => b.kind === "inbox").length === 1)
+// Repeated folding of unchanged state must also not duplicate the box.
+orderApp.updateInboxBlock()
+orderApp.updateInboxBlock()
+ok("repeated folds keep one pending box", orderApp.blocks.filter((b) => b.kind === "inbox").length === 1)
+// Also holds for the system-prompt box, the other late-arriving context block.
+orderApp.setSystemPrompt("SYSTEM PROMPT BODY")
+ok("system prompt box parks last too", orderApp.blocks[orderApp.blocks.length - 1] === orderApp.systemPromptBlock)
+ok("system prompt box did not duplicate", orderApp.blocks.filter((b) => b.kind === "sysnote").length === 1)
+
+// ---- session system prompt (dsh 0.1.5 session format V3) ------------------
+const sysApp = new App(fakeTerm)
+sysApp.setSession({ id: "s", title: "Sys" })
+ok("empty system head adds nothing", sysApp.setSystemPrompt("") === false && sysApp.blocks.length === 0)
+ok("system prompt box is added", sysApp.setSystemPrompt("You are an AI agent.") === true)
+ok("system prompt box exists once", sysApp.blocks.filter((b) => b.kind === "sysnote").length === 1)
+const sysCollapsed = inboxRender(sysApp)
+ok("system prompt is collapsed by default", sysCollapsed.includes("system prompt") && !sysCollapsed.includes("You are an AI agent."))
+sysApp.toggleNote(sysApp.systemPromptBlock)
+const sysExpandedText = inboxRender(sysApp)
+ok("system prompt expands to its text", sysExpandedText.includes("You are an AI agent.") && sysExpandedText.includes("click to collapse"))
+ok("identical prompt is not re-boxed", sysApp.setSystemPrompt("You are an AI agent.") === false && sysApp.blocks.filter((b) => b.kind === "sysnote").length === 1)
+ok("changed prompt reuses the box", sysApp.setSystemPrompt("You are an AI agent. Be brief.") === true && sysApp.blocks.filter((b) => b.kind === "sysnote").length === 1)
+
+// resetView (new session / replay restart) clears inbox and prompt state.
+sysApp.applyInboxSplice({ target: "next-turn", start: 0, inserted: [inboxMsg("r1", "stale")] })
+sysApp.updateInboxBlock()
+sysApp.resetView()
+ok("resetView clears inbox state", sysApp.inboxBlock === null && sysApp.inbox.nextTurn.length === 0 && sysApp.inbox.nextStep.length === 0)
+ok("resetView clears system prompt", sysApp.systemPromptText === "" && sysApp.systemPromptBlock === null && sysApp.blocks.length === 0)
+
+// ---- rendered rows must never exceed the box they are rendered for --------
+// Screen.text() clips per cell, so an over-wide row cannot corrupt the frame,
+// but a row wider than its box means text was authored past the edge. Keep every
+// block inside its width: a wrapped row would shift the whole transcript.
+const auditApp = new App(fakeTerm)
+auditApp.setSession({ id: "audit", title: "Audit" })
+auditApp.addUser("paragraph with 中文 wide runes and a fairly long tail")
+auditApp.startAssistant()
+auditApp.streamChunk({ type: "reasoning-delta", text: "reasoning 中文 ".repeat(10) })
+auditApp.setAssistantText("answer " + "z".repeat(120))
+auditApp.startTool({ callId: "a1", name: "pwsh", args: { command: "echo " + "x".repeat(80) } })
+auditApp.updateTool("a1", { status: "ok", result: "tail " + "y".repeat(120) })
+auditApp.addNote("reminder " + "中文".repeat(30), "system-reminder")
+auditApp.setSystemPrompt("prompt " + "e".repeat(150))
+auditApp.addSystem("system " + "s".repeat(150), "warn")
+auditApp.setTodo([
+  { content: "a todo item with 中文 " + "t".repeat(90), status: "in_progress" },
+  { content: "done", status: "completed" },
+])
+auditApp.applyInboxSplice({ target: "next-turn", start: 0, inserted: [{ id: "q", content: [{ type: "text", text: "queued " + "中文".repeat(20) }] }] })
+auditApp.updateInboxBlock()
+auditApp.toggleNote(auditApp.blocks.find((b) => b.kind === "note"))
+auditApp.toggleNote(auditApp.systemPromptBlock)
+auditApp.toggleThinking(auditApp.blocks.find((b) => b.kind === "assistant"))
+auditApp.toggleInbox(auditApp.inboxBlock)
+let overWide = []
+for (const width of [40, 52, 61, 80, 99, 100, 130]) {
+  for (const block of auditApp.blocks) {
+    for (const line of auditApp._ensureBlockLines(block, width)) {
+      const w = line.segs.reduce((sum, s) => sum + displayWidth(s.anim ? "⠿" : s.text), 0)
+      if (w > width) overWide.push(block.kind + " @width " + width + " line=" + w)
+    }
+  }
+}
+ok("every rendered row stays inside its box", overWide.length === 0)
+// A model-authored todo item is the one block whose text arrives unbounded.
+const todoBlock = auditApp.blocks.find((b) => b.kind === "todo")
+const todoLines = auditApp._ensureBlockLines(todoBlock, 40)
+const todoWidest = Math.max(...todoLines.map((l) => l.segs.reduce((s, g) => s + displayWidth(g.text), 0)))
+ok("long todo items are truncated to the row", todoWidest <= 40)
+
+// ---- painter: rows stay column-exact and orphaned wide runes are cleared --
+// Feed frames through the real Terminal.paint into a capturing stdout and
+// emulate the terminal, then require the terminal to match the last frame.
+function paintCapture(cols, rows) {
+  const writes = []
+  const output = {
+    columns: cols, rows, isTTY: true,
+    write(s) { writes.push(s); return true },
+    on() {}, off() {},
+  }
+  const term = new Terminal({ input: { isTTY: false, on() {}, off() {}, setRawMode() {}, resume() {}, pause() {} }, output })
+  return { term, writes, output }
+}
+function emulatePaint(writes, cols, rows) {
+  const grid = []
+  for (let y = 0; y < rows; y++) grid.push(new Array(cols).fill(" "))
+  let x = 0, y = 0, pendingWrap = false
+  const text = writes.join("")
+  for (let i = 0; i < text.length;) {
+    const ch = text[i]
+    if (ch === "\x1b") {
+      const m = /^\x1b\[([0-9;]*)([A-Za-z])/.exec(text.slice(i))
+      if (m) {
+        const nums = m[1].split(";").filter((s) => s !== "").map(Number)
+        if (m[2] === "H") { y = Math.min(rows - 1, Math.max(0, (nums[0] || 1) - 1)); x = Math.min(cols - 1, Math.max(0, (nums[1] || 1) - 1)); pendingWrap = false }
+        i += m[0].length
+        continue
+      }
+      i += 2
+      continue
+    }
+    if (ch === "\r") { x = 0; pendingWrap = false; i++; continue }
+    if (ch === "\n") { y = Math.min(rows - 1, y + 1); pendingWrap = false; i++; continue }
+    const rune = String.fromCodePoint(text.codePointAt(i))
+    const w = runeWidth(rune)
+    if (pendingWrap) { x = 0; y = Math.min(rows - 1, y + 1); pendingWrap = false }
+    if (w === 0) { if (x > 0) grid[y][x - 1] += rune; i += rune.length; continue }
+    grid[y][x] = rune
+    if (w === 2 && x + 1 < cols) grid[y][x + 1] = ""
+    if (x + w >= cols) { x = cols - 1; pendingWrap = true } else x += w
+    i += rune.length
+  }
+  return grid
+}
+function paintFrames(cols, rows, frames) {
+  const { term, writes } = paintCapture(cols, rows)
+  let last = null
+  for (const build of frames) {
+    const s = new Screen(cols, rows)
+    build(s)
+    last = s
+    term.paint(s)
+  }
+  return { grid: emulatePaint(writes, cols, rows), last }
+}
+function gridDiff(grid, screen, cols, rows) {
+  const bad = []
+  for (let y = 0; y < rows; y++) {
+    for (let x = 0; x < cols; x++) {
+      const want = screen.cells[y][x].ch
+      if (want === "") continue
+      if (grid[y][x] !== want) bad.push({ y, x, want, got: grid[y][x] })
+    }
+  }
+  return bad
+}
+
+// A wide rune whose continuation cell was overwritten in the next frame must be
+// repainted as a space, or its right half survives beside the new text.
+{
+  const COLS = 20, ROWS = 3
+  const { grid } = paintFrames(COLS, ROWS, [
+    (s) => { s.text(0, 0, "中文X") },
+    (s) => { s.text(0, 0, "AB"); s.set(1, 0, "B"); s.set(2, 0, "X") },
+  ])
+  const row0 = grid[0].join("")
+  ok("orphaned wide rune is cleared", !row0.includes("中") && row0.startsWith("ABX"))
+}
+// A row that shrinks must not leave the previous frame's tail behind.
+{
+  const COLS = 30, ROWS = 3
+  const { grid } = paintFrames(COLS, ROWS, [
+    (s) => { s.text(0, 0, "a long line that fills the whole row") },
+    (s) => { s.text(0, 0, "short") },
+  ])
+  ok("shrunk row clears its stale tail", grid[0].join("").trimEnd() === "short")
+}
+// Wide rune landing on the final column: the row still occupies exactly COLS.
+{
+  const COLS = 12, ROWS = 2
+  const { grid } = paintFrames(COLS, ROWS, [
+    (s) => { s.text(0, 0, "aaaaaaaaaa"); s.text(COLS - 1, 0, "中") },
+    (s) => { s.text(0, 0, "bbbbbbbbbbb"); s.set(COLS - 1, 0, "Z") },
+  ])
+  ok("wide rune at the last column stays in the row", grid[0].join("").trimEnd() === "bbbbbbbbbbbZ")
+}
+// The 0.1.5 blocks: expanding a fold must leave nothing of the collapsed state.
+{
+  const COLS = 60, ROWS = 20
+  const app = new App({ cols: COLS, rows: ROWS, on() {} })
+  app.setSession({ id: "fold", title: "Fold" })
+  app.addNote("a reminder that is long enough to fill most of the row 中文中文中文中文中文", "system-reminder")
+  const note = app.blocks.find((b) => b.kind === "note")
+  const frames = [
+    (a) => {},
+    (a) => { a.toggleNote(note) },
+    (a) => { a.toggleNote(note) },
+    (a) => { a.toggleNote(note) },
+  ]
+  const { term, writes } = paintCapture(COLS, ROWS)
+  let last = null
+  for (const step of frames) { step(app); last = app.render(); term.paint(last) }
+  const grid = emulatePaint(writes, COLS, ROWS)
+  ok("fold expand/collapse leaves no residue", gridDiff(grid, last, COLS, ROWS).length === 0)
+}
 
 console.log("")
 if (failed > 0) { console.log(failed + " test(s) failed"); process.exit(1) }
