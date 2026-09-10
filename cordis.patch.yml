@@ -22,3 +22,11 @@
       name: '@deepseek-ai/dsh-agent-presets'
       config:
         default: standard
+
+    # The model-facing `ask_user_question` tool. dsh-base mounts the
+    # `user-questions` service but NOT this tool — the agent presets mount it,
+    # and a TUI session composes process-wide from the base rather than from a
+    # preset, so the row must be declared here or the tool is simply absent.
+    # lib/index.js answers the `user-questions/request` waterfall with a modal.
+    - id: tool-ask-user
+      name: '@deepseek-ai/dsh-tool-ask-user'

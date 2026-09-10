@@ -92,11 +92,13 @@ if (-not (Get-Command pnpm -ErrorAction SilentlyContinue)) {
 
 if (Get-Command dsh -ErrorAction SilentlyContinue) {
     Write-Step "installing $Source into profile '$Profile'..."
-    Run 'dsh' @('plugin', '--profile', $Profile, 'add', $Source)
+    # -w: the profile is its own pnpm workspace root, so a bare `add` is
+    # rejected with ERR_PNPM_ADDING_TO_ROOT.
+    Run 'dsh' @('plugin', '--profile', $Profile, 'add', '-w', $Source)
 } else {
     Write-Warn 'dsh CLI not found - using npx fallback for this install.'
     Write-Step "installing $Source into profile '$Profile'..."
-    Run 'npx' @('--yes', $DshPackage, 'plugin', '--profile', $Profile, 'add', $Source)
+    Run 'npx' @('--yes', $DshPackage, 'plugin', '--profile', $Profile, 'add', '-w', $Source)
 }
 
 if ($Launcher) {

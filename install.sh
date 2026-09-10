@@ -75,7 +75,9 @@ else
 fi
 
 say "installing ${SOURCE} into profile '${PROFILE}'..."
-"${DSH_CMD[@]}" plugin --profile "$PROFILE" add "$SOURCE"
+# -w: the profile is its own pnpm workspace root, so a bare `add` is rejected
+# with ERR_PNPM_ADDING_TO_ROOT.
+"${DSH_CMD[@]}" plugin --profile "$PROFILE" add -w "$SOURCE"
 
 if [[ "$WITH_LAUNCHER" -eq 1 ]]; then
   say "installing the dsh-oc-tui launcher globally..."
