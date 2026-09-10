@@ -362,7 +362,7 @@ More detail, in Chinese: [docs/用户手册.md](docs/用户手册.md).
 
 ## Known limitations
 
-- IME composition and bracketed-paste image attachments are not exposed by the zero-dependency terminal engine yet.
+- IME composition is not exposed by the zero-dependency terminal engine yet. Pasted images are: a bracketed paste of raw image bytes, a `data:image/...;base64,...` URL, a local image path, or an image URL becomes a `[Image N]` attachment, and pasting text nothing recognizes asks the terminal for its clipboard (OSC 52).
 - The plugin does not hot-reload: the profile's HMR root is the profile directory, so a running TUI keeps the copy it booted with.
 - `dsh tui` as a bare subcommand needs a shell alias — the stock launcher hardcodes only `web` and `plugin`.
 - Harness slash commands need a live session; on the title screen the TUI tells you to start one first.
