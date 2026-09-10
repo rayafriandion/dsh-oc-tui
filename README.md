@@ -198,13 +198,14 @@ It prefers the `dsh` on `PATH` and falls back to `npx --yes @deepseek-ai/dsh`. I
 | `Left` / `Right` | Move the caret within the input box. |
 | `PgUp` / `PgDn` | Scroll the transcript. |
 | `Esc` | Close the context-meter panel, the thinking slider, or help; cancel an approval. |
+| `Esc Esc` | Idle with an empty prompt: open the rewind picker. |
 | `y` / `n` | Answer an inline approval prompt. |
 
 **Mouse.** The wheel scrolls the transcript (or the Settings window while it is open). Hold the left button and drag across the transcript to select text, then press the right button to copy the selection.
 
 ### Slash commands
 
-Built in: `/help` `/settings` `/new` `/resume <id>` `/model <id>` `/provider <route>` `/clear` `/cancel` `/quit` (`/exit` also works).
+Built in: `/help` `/settings` `/new` `/resume <id>` `/model <id>` `/provider <route>` `/rewind` `/clear` `/cancel` `/quit` (`/exit` also works).
 
 Harness commands — `/compact`, `/goal`, `/plan`, … — are forwarded to `ctx.commands` and run without a model turn. They need a live session: on the title screen the TUI answers `/<name>: start a session first` instead of dropping the command silently.
 

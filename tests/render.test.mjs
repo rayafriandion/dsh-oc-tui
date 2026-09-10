@@ -196,6 +196,32 @@ for (const [COLS, ROWS] of [[40, 30], [80, 24], [100, 30], [140, 42]]) {
   ok("every painted row is exactly " + COLS + " columns", wrong.length === 0, JSON.stringify(wrong.slice(0, 5)))
 }
 
+// Rewind overlay open/close must not strand picker cells in the transcript.
+{
+  const COLS = 80, ROWS = 24
+  const { term, writes } = paintCapture(COLS, ROWS)
+  const app = new App({ cols: COLS, rows: ROWS, on() {} })
+  app.setSession({ id: "s", title: "Rewind" })
+  app.openRewind({
+    items: [
+      { n: 1, seq: 0, time: Date.now(), label: "1. first prompt" },
+      { n: 2, seq: null, label: "(current)", current: true },
+    ],
+    restoreOptions: [
+      { id: "both", label: "Restore conversation and files" },
+      { id: "nevermind", label: "Never mind" },
+    ],
+  })
+  let screen = app.render(); term.paint(screen)
+  ok("rewind overlay leaves no residue", gridDiff(emulatePaint(writes, COLS, ROWS), screen, COLS, ROWS).length === 0)
+  app.moveRewind(-1)
+  screen = app.render(); term.paint(screen)
+  ok("rewind overlay move leaves no residue", gridDiff(emulatePaint(writes, COLS, ROWS), screen, COLS, ROWS).length === 0)
+  app.closeRewind()
+  screen = app.render(); term.paint(screen)
+  ok("closing rewind overlay leaves no residue", gridDiff(emulatePaint(writes, COLS, ROWS), screen, COLS, ROWS).length === 0)
+}
+
 console.log("")
 if (failed > 0) { console.log(failed + " render test(s) failed"); process.exit(1) }
 console.log("all render tests passed")
