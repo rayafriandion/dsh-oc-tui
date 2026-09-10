@@ -2,11 +2,14 @@
 
 **A terminal UI for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)** — an opencode-inspired chat client that boots inside the `dsh` process as a profile app plugin.
 
+[![npm](https://img.shields.io/npm/v/dsh-oc-tui?label=npm&color=BF392B)](https://www.npmjs.com/package/dsh-oc-tui)
+[![awesome-dsh-plugin](https://img.shields.io/badge/awesome--dsh--plugin-marketplace-BF392B)](https://awesome-dsh-plugin.com/zh/p/rayafriandion/dsh-oc-tui/)
 [![License: LGPL-3.0-or-later](https://img.shields.io/badge/license-LGPL--3.0--or--later-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%3E%3D22-339933.svg)](https://nodejs.org)
-[![DeepSeek Harness plugin](https://img.shields.io/badge/DeepSeek%20Harness-profile%20app%20plugin-4d6bfe.svg)](https://github.com/deepseek-ai/deepseek-harness)
 
 `dsh-oc-tui` renders the harness's durable event stream in your terminal — streaming replies, tool cards, todo lists, thinking blocks — and routes what you type back into the agent. Model routing, tool execution, approvals, commands, durable sessions, and credentials stay owned by DSH; this package owns terminal input and presentation.
+
+Published on **npm** as [`dsh-oc-tui`](https://www.npmjs.com/package/dsh-oc-tui) and listed in the [**awesome-dsh-plugin**](https://awesome-dsh-plugin.com/zh/p/rayafriandion/dsh-oc-tui/) marketplace.
 
 > 中文文档：[docs/用户手册.md](docs/用户手册.md)
 
@@ -66,10 +69,31 @@ pnpm --version
 
 ## Install
 
-### From the registry
+### From npm
+
+The package is published on npm as [`dsh-oc-tui`](https://www.npmjs.com/package/dsh-oc-tui). Install it into the `tui` profile:
 
 ```sh
 dsh plugin --profile tui add -w dsh-oc-tui
+```
+
+Or install the launcher globally — that puts the `dsh-oc-tui` command on `PATH`, which then boots `dsh --profile tui`:
+
+```sh
+npm install -g dsh-oc-tui
+```
+
+### Version channels
+
+The **npm package** and the **[awesome-dsh-plugin](https://awesome-dsh-plugin.com/zh/p/rayafriandion/dsh-oc-tui/) marketplace entry** both ship **stable releases only** — pre-releases are never published to either. `npm install` therefore gives you the latest stable version, not a release candidate.
+
+This README describes the current source tree, which can be ahead of the published release — a feature documented here is only guaranteed to exist in a stable build once that version is on npm.
+
+To run a pre-release, or unreleased work from this repository, install it explicitly from source:
+
+```sh
+npm pack                                   # -> dsh-oc-tui-<version>.tgz
+dsh plugin --profile tui add -w ./dsh-oc-tui-<version>.tgz
 ```
 
 ### One-command installers
