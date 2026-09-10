@@ -1,6 +1,6 @@
 {
   "name": "dsh-oc-tui",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "type": "module",
   "description": "A terminal UI (TUI) for DeepSeek Harness — an opencode-inspired chat client that boots as a dsh profile app plugin.",
   "license": "LGPL-3.0-or-later",
@@ -20,8 +20,7 @@
     "lib",
     "bin",
     "cordis.patch.yml",
-    "docs/用户手册.md",
-    "docs/max-thinking.gif"
+    "docs/用户手册.md"
   ],
   "engines": {
     "node": ">=22"
