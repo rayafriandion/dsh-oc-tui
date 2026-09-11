@@ -6,7 +6,7 @@
 // These tests drive a real App through the state changes that hit that boundary
 // and compare an emulated terminal against the frame the app just produced.
 import { Terminal } from "../lib/term.js"
-import { App } from "../lib/ui.js"
+import { App, THEME } from "../lib/ui.js"
 import { runeWidth } from "../lib/util.js"
 
 let failed = 0
@@ -248,7 +248,26 @@ for (const [COLS, ROWS, cwd, branch] of [
   if (ROWS >= 20) {
     ok(`${COLS}x${ROWS} workspace row shows the path`, painted || rows.some((row) => row.includes("WORKSPACE")),
       JSON.stringify(rows[1].slice(0, COLS)))
+    // The strip has a tone of its own: not the brand bar above, not the page below.
+    const barBg = screen.cells[1][2].style?.bg
+    ok(`${COLS}x${ROWS} workspace strip has its own background`,
+      barBg === THEME.workspaceBar && barBg !== THEME.backgroundPanel && barBg !== THEME.background,
+      String(barBg))
   }
+}
+
+// Nothing to name (title screen, or a path with no room) keeps the page tone, so
+// the strip never shows up as an unexplained empty band.
+{
+  const app = new App({ cols: 80, rows: 24, on() {} })
+  app.setWelcome({ workingDirectory: "D:\\Projects\\x", gitBranch: "main" })
+  ok("title screen keeps the page background on the workspace row",
+    app.render().cells[1][2].style?.bg === THEME.background)
+  const narrow = new App({ cols: 20, rows: 24, on() {} })
+  narrow.setSession({ id: "s", title: "narrow" })
+  narrow.setWorkspace({ workingDirectory: "D:\\Projects\\a-very-long-workspace-name", gitBranch: "" })
+  ok("a path with no room leaves the row untinted",
+    narrow.render().cells[1][2].style?.bg === THEME.background)
 }
 
 console.log("")
