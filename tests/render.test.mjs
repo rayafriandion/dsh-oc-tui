@@ -209,7 +209,7 @@ for (const [COLS, ROWS] of [[40, 30], [80, 24], [100, 30], [140, 42]]) {
     ],
     restoreOptions: [
       { id: "both", label: "Restore conversation and files" },
-      { id: "nevermind", label: "Never mind" },
+      { id: "cancel", label: "Cancel" },
     ],
   })
   let screen = app.render(); term.paint(screen)
