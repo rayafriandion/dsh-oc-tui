@@ -9,7 +9,7 @@ import { SessionMetrics } from "../lib/metrics.js"
 import { SETTINGS_MENU, loadModelSettings, loadProviderModels, loadWebSettings, saveWebSetting } from "../lib/web-settings.js"
 import { DSH_PACKAGE, TUI_PACKAGE, parseRegistryView, isPrerelease, coreSegments, latestStable, updateStatus, compareVersions, buildUpdateItems, buildVersionItems, resolveActiveProfile, stderrSummary, dshLockEntries, installResultFrom, deferredInstallSpec, installMarkerPath, readInstallMarker, writeInstallMarker } from "../lib/updates.js"
 import { renderMarkdown } from "../lib/markdown.js"
-import { displayWidth, wrapText, roughTokens, truncateWidth, contentText, timeString, toolSummary, detectImageMediaType, imageMediaTypeFromName, decodeDataUrl, localImagePath, runeWidth, userContentBlocks } from "../lib/util.js"
+import { displayWidth, wrapText, roughTokens, truncateWidth, shortenPath, contentText, timeString, toolSummary, detectImageMediaType, imageMediaTypeFromName, decodeDataUrl, localImagePath, runeWidth, userContentBlocks } from "../lib/util.js"
 
 let failed = 0
 const eq = (name, actual, expected) => {
@@ -23,6 +23,15 @@ const ok = (name, cond) => cond ? console.log("ok   " + name) : (console.log("FA
 eq("displayWidth CJK", displayWidth("中文a"), 5)
 eq("roughTokens", roughTokens("你好world"), 3)
 eq("truncateWidth", truncateWidth("hello world", 5), "hello")
+eq("shortenPath keeps a short path", shortenPath("D:\\a\\b", 20), "D:\\a\\b")
+eq("shortenPath elides whole head segments", shortenPath("D:\\Projects\\dsh-oc-tui", 12), "…\\dsh-oc-tui")
+eq("shortenPath keeps the deepest segments that fit", shortenPath("D:\\Projects\\DeepSeekHarnessPlugins", 30), "…\\DeepSeekHarnessPlugins")
+eq("shortenPath fills room with the path tail", shortenPath("D:\\Projects\\deepseek-harness-tui\\lib", 20), "…eek-harness-tui\\lib")
+eq("shortenPath clips to the requested width", displayWidth(shortenPath("D:\\averyveryverylongfoldername", 10)) <= 10, true)
+eq("shortenPath keeps the tail of a single long segment", shortenPath("D:\\averyveryverylongfoldername", 10).endsWith("oldername"), true)
+eq("shortenPath is cell aware for CJK", displayWidth(shortenPath("D:\\项目\\一个非常长的中文工作区目录", 12)) <= 12, true)
+eq("shortenPath gives up when there is no room", shortenPath("D:\\a\\b", 1), "")
+eq("shortenPath on an empty path", shortenPath("", 20), "")
 eq("wrapText", wrapText("a b c d e", 5), ["a b c", "d e"])
 eq("contentText includes reasoning", contentText([{ type: "reasoning", text: "hidden" }, { type: "text", text: "visible" }]), "hiddenvisible")
 eq("contentText skips reasoning", contentText([{ type: "reasoning", text: "hidden" }, { type: "text", text: "visible" }], { skipReasoning: true }), "visible")

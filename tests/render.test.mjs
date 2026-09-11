@@ -6,7 +6,7 @@
 // These tests drive a real App through the state changes that hit that boundary
 // and compare an emulated terminal against the frame the app just produced.
 import { Terminal } from "../lib/term.js"
-import { App } from "../lib/ui.js"
+import { App, THEME } from "../lib/ui.js"
 import { runeWidth } from "../lib/util.js"
 
 let failed = 0
@@ -194,6 +194,80 @@ for (const [COLS, ROWS] of [[40, 30], [80, 24], [100, 30], [140, 42]]) {
   const widths = rowWidths(writes).filter((r) => r.cols !== 0)
   const wrong = widths.filter((r) => r.cols !== COLS)
   ok("every painted row is exactly " + COLS + " columns", wrong.length === 0, JSON.stringify(wrong.slice(0, 5)))
+}
+
+// Rewind overlay open/close must not strand picker cells in the transcript.
+{
+  const COLS = 80, ROWS = 24
+  const { term, writes } = paintCapture(COLS, ROWS)
+  const app = new App({ cols: COLS, rows: ROWS, on() {} })
+  app.setSession({ id: "s", title: "Rewind" })
+  app.openRewind({
+    items: [
+      { n: 1, seq: 0, time: Date.now(), label: "1. first prompt" },
+      { n: 2, seq: null, label: "(current)", current: true },
+    ],
+    restoreOptions: [
+      { id: "both", label: "Restore conversation and files" },
+      { id: "cancel", label: "Cancel" },
+    ],
+  })
+  let screen = app.render(); term.paint(screen)
+  ok("rewind overlay leaves no residue", gridDiff(emulatePaint(writes, COLS, ROWS), screen, COLS, ROWS).length === 0)
+  app.moveRewind(-1)
+  screen = app.render(); term.paint(screen)
+  ok("rewind overlay move leaves no residue", gridDiff(emulatePaint(writes, COLS, ROWS), screen, COLS, ROWS).length === 0)
+  app.closeRewind()
+  screen = app.render(); term.paint(screen)
+  ok("closing rewind overlay leaves no residue", gridDiff(emulatePaint(writes, COLS, ROWS), screen, COLS, ROWS).length === 0)
+}
+
+// The workspace row names the path a live session is rooted in. A long path must
+// be shortened without breaking the row's width budget or leaving residue, and a
+// wide-rune path must be clipped by cells rather than by code units.
+for (const [COLS, ROWS, cwd, branch] of [
+  [140, 42, "D:\\Projects\\DeepSeekHarnessPlugins", "main"],
+  [100, 30, "D:\\Projects\\DeepSeekHarnessPlugins\\deepseek-harness-tui", "feat/rewind"],
+  [80, 24, "D:\\Projects\\DeepSeekHarnessPlugins\\deepseek-harness-tui", ""],
+  [60, 20, "C:\\Users\\Sanchess\\AppData\\Local\\Temp\\a-very-long-scratch-directory-name", "feature/very-long-branch-name"],
+  [40, 24, "D:\\项目\\一个非常长的中文工作区目录名字", "main"],
+  [40, 24, "D:\\Projects\\x", ""],
+  [80, 18, "D:\\Projects\\deepseek-harness-tui", "main"],
+]) {
+  const { term, writes } = paintCapture(COLS, ROWS)
+  const app = new App({ cols: COLS, rows: ROWS, on() {} })
+  app.setSession({ id: "s", title: "Workspace row" })
+  app.setWorkspace({ workingDirectory: cwd, gitBranch: branch })
+  const screen = app.render(); term.paint(screen)
+  const diff = gridDiff(emulatePaint(writes, COLS, ROWS), screen, COLS, ROWS)
+  ok(`${COLS}x${ROWS} workspace row no residue`, diff.length === 0, JSON.stringify(diff.slice(0, 3)))
+  const wrong = rowWidths(writes).filter((r) => r.cols !== 0 && r.cols !== COLS)
+  ok(`${COLS}x${ROWS} workspace row keeps ${COLS} columns`, wrong.length === 0, JSON.stringify(wrong.slice(0, 3)))
+  const rows = screen.cells.map((row) => row.map((c) => c.ch).join(""))
+  const painted = rows.some((row) => row.includes(cwd))
+  if (ROWS >= 20) {
+    ok(`${COLS}x${ROWS} workspace row shows the path`, painted || rows.some((row) => row.includes("WORKSPACE")),
+      JSON.stringify(rows[1].slice(0, COLS)))
+    // The strip has a tone of its own: not the brand bar above, not the page below.
+    const barBg = screen.cells[1][2].style?.bg
+    ok(`${COLS}x${ROWS} workspace strip has its own background`,
+      barBg === THEME.workspaceBar && barBg !== THEME.backgroundPanel && barBg !== THEME.background,
+      String(barBg))
+  }
+}
+
+// Nothing to name (title screen, or a path with no room) keeps the page tone, so
+// the strip never shows up as an unexplained empty band.
+{
+  const app = new App({ cols: 80, rows: 24, on() {} })
+  app.setWelcome({ workingDirectory: "D:\\Projects\\x", gitBranch: "main" })
+  ok("title screen keeps the page background on the workspace row",
+    app.render().cells[1][2].style?.bg === THEME.background)
+  const narrow = new App({ cols: 20, rows: 24, on() {} })
+  narrow.setSession({ id: "s", title: "narrow" })
+  narrow.setWorkspace({ workingDirectory: "D:\\Projects\\a-very-long-workspace-name", gitBranch: "" })
+  ok("a path with no room leaves the row untinted",
+    narrow.render().cells[1][2].style?.bg === THEME.background)
 }
 
 console.log("")
