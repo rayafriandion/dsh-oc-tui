@@ -270,6 +270,41 @@ for (const [COLS, ROWS, cwd, branch] of [
     narrow.render().cells[1][2].style?.bg === THEME.background)
 }
 
+// ---- session stats strip and window ----------------------------------------
+// The strip takes a transcript row and the window repaints over the frame; both
+// must leave the terminal exactly as the painter believes it is, at every width.
+for (const [COLS, ROWS] of [[130, 45], [100, 30], [80, 24], [60, 20], [46, 16]]) {
+  const { term, writes } = paintCapture(COLS, ROWS)
+  const app = new App({ cols: COLS, rows: ROWS, on() {} })
+  app.setSession({ id: "s", title: "Stats", model: "m" })
+  // A session with figures: counts, durations, speeds, cache and billed tokens.
+  app.setStats({
+    stats: {
+      turns: 2, steps: 5, llmMs: 12_340, toolMs: 1_200,
+      ttftMs: 1_800, ttftSteps: 3, decodeMs: 5_000, decodeTokens: 120,
+      uncachedInputTokens: 1_800, outputTokens: 12_400, cacheReadTokens: 118_000, cacheWriteTokens: 200,
+      billedInputTokens: 120_000, ttftAverageMs: 600, tokensPerSecond: 24, cacheHitRate: "98",
+    },
+    pressure: { projectedTokens: 32_000, contextWindow: 128_000 },
+    breakdown: { systemTokens: 1_100, toolsTokens: 6_800, messageTokens: 24_100 },
+  })
+  let screen = app.render(); term.paint(screen)
+  ok(`${COLS}x${ROWS} stats strip leaves no residue`, gridDiff(emulatePaint(writes, COLS, ROWS), screen, COLS, ROWS).length === 0)
+  const stripRow = screen.cells.findIndex((row) => row.some((c) => c.ch === "▤"))
+  ok(`${COLS}x${ROWS} stats strip is one row above the composer`, stripRow > 0)
+  app.statsOpen = true
+  screen = app.render(); term.paint(screen)
+  const diff = gridDiff(emulatePaint(writes, COLS, ROWS), screen, COLS, ROWS)
+  ok(`${COLS}x${ROWS} stats window leaves no residue`, diff.length === 0, JSON.stringify(diff.slice(0, 3)))
+  const rows = screen.cells.map((r) => r.map((c) => c.ch).join("")).join("\n")
+  ok(`${COLS}x${ROWS} stats window keeps its box inside the screen`,
+    rows.includes("session stats") && screen.cells.length === ROWS)
+  app.statsOpen = false
+  screen = app.render(); term.paint(screen)
+  ok(`${COLS}x${ROWS} closing the stats window leaves no residue`,
+    gridDiff(emulatePaint(writes, COLS, ROWS), screen, COLS, ROWS).length === 0)
+}
+
 console.log("")
 if (failed > 0) { console.log(failed + " render test(s) failed"); process.exit(1) }
 console.log("all render tests passed")

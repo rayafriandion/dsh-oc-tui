@@ -24,7 +24,7 @@ Published on **npm** as [`dsh-oc-tui`](https://www.npmjs.com/package/dsh-oc-tui)
   - [Slash commands](#slash-commands)
   - [Interactive prompts](#interactive-prompts)
   - [Thinking intensity](#thinking-intensity)
-  - [Context meter and telemetry](#context-meter-and-telemetry)
+  - [Session stats and the context meter](#session-stats-and-the-context-meter)
   - [Settings](#settings)
   - [In-app updates](#in-app-updates)
 - [How it works](#how-it-works)
@@ -43,8 +43,9 @@ Published on **npm** as [`dsh-oc-tui`](https://www.npmjs.com/package/dsh-oc-tui)
 | **Tool activity** | Tool cards with a one-line summary (`read src/app.ts`, `run npm test`), flowing spinners while running, and markdown-rendered results. |
 | **Interactive questions** | The model can pause and ask you — option lists, multi-select, free text, and a scrollable plan review — all inline in the terminal. See [Interactive prompts](#interactive-prompts). |
 | **Inline approvals** | `approval/request` prompts are answered with `y` / `n` without leaving the UI. |
-| **Telemetry footer** | Session tokens, average time to first token, decode throughput, and cache-hit rate, folded from durable events. |
-| **Context meter** | Live context occupancy (`ctx ▓▓░░ 32K/128K 25%`) with a click-through composition breakdown. |
+| **Session stats** | One stats strip above the composer — turns/steps, LLM and tool wall time, average TTFT, decode throughput, cache-hit rate, and billed input/output tokens — folded from durable events. See [Session stats and the context meter](#session-stats-and-the-context-meter). |
+| **Stats window** | Click the strip or the context meter, or type `/stats`, for the full session-statistics and token-usage breakdown. |
+| **Context meter** | Live context occupancy (`ctx ▓▓░░ 32K/128K 25%`), with the system/tools/messages composition in the same window. |
 | **Thinking intensity** | `Tab` cycles the current model's real reasoning levels; `Ctrl+E` opens a slider. The level is applied per request and persisted. |
 | **Shared settings** | The same host settings namespaces the Web UI uses — general, sessions, per-provider model configuration, credentials — persisted to `$DSH_HOME/settings.yaml`. |
 | **In-app updates** | Detect and switch versions of `@deepseek-ai/dsh` and `dsh-oc-tui` from inside the TUI, with Windows-safe deferred installs. |
@@ -197,7 +198,7 @@ It prefers the `dsh` on `PATH` and falls back to `npx --yes @deepseek-ai/dsh`. I
 | `Up` / `Down` | Move the caret across a multi-line prompt; on the first/last row, step through input history. |
 | `Left` / `Right` | Move the caret within the input box. |
 | `PgUp` / `PgDn` | Scroll the transcript. |
-| `Esc` | Close the context-meter panel, the thinking slider, or help; cancel an approval; cancel a running turn; clear the prompt you are typing. |
+| `Esc` | Close the session stats window, the thinking slider, or help; cancel an approval; cancel a running turn; clear the prompt you are typing. |
 | `Esc Esc` | Idle with an empty prompt: open the rewind picker. |
 | `y` / `n` | Answer an inline approval prompt. |
 
@@ -205,11 +206,13 @@ It prefers the `dsh` on `PATH` and falls back to `npx --yes @deepseek-ai/dsh`. I
 
 ### Slash commands
 
-Built in: `/help` `/settings` `/new` `/resume <id>` `/model <id>` `/provider <route>` `/rewind` `/clear` `/cancel` `/quit` (`/exit` also works).
+Built in: `/help` `/settings` `/new` `/resume <id>` `/model <id>` `/provider <route>` `/rewind` `/stats` `/clear` `/cancel` `/quit` (`/exit` also works).
 
 **Rewind.** `Esc Esc` (or `/rewind`) lists the prompts of the live session. Restoring the **conversation** forks a new session from the events before the chosen prompt — the parent session is left untouched on disk, exactly as the harness's own `session/fork` does — and the picker lands on the most recent prompt, so `Enter` twice rewinds the last turn. `/rewind <n|last> [conversation|code|both]` runs it without the picker. The fork starts with an **empty inbox**: a cut before a turn also cuts the inbox claim that turn performed, so anything the parent had queued — including the prompt you rewound away from — is not delivered again; it stays in the parent's log, and the result line says `dropped N inherited pending input` when there was any. Restoring **files** is best-effort and fenced: it needs a git worktree (anywhere else the rewind reports `files not restored (not a git worktree)` and changes nothing), it rewrites tracked files from `HEAD` without touching the index, and it removes an untracked file only when the transcript's first recorded write to that path is at or after the rewind point. Everything it overwrites or deletes is copied to `$DSH_HOME/rewind-backups/<sessionId>/<timestamp>/` first, and the result line names that directory. Because the log stores no file contents, a tracked file returns to its last commit, not to its exact state at the rewind point.
 
 Harness commands — `/compact`, `/goal`, `/plan`, … — are forwarded to `ctx.commands` and run without a model turn. They need a live session: on the title screen the TUI answers `/<name>: start a session first` instead of dropping the command silently.
+
+`/stats` is the TUI's own command: it toggles the [session stats window](#session-stats-and-the-context-meter) and, like the harness commands, needs a live session.
 
 ### Interactive prompts
 
@@ -243,11 +246,23 @@ The effective level sits on the composer's top-right border as the bare level na
 
 The choice is applied to the session's requests through the `agent/request` waterfall and stored in `agent-default-model.reasoningEffort`.
 
-### Context meter and telemetry
+### Session stats and the context meter
 
-The status row carries a live context-occupancy bar fed by the token-meter `contextPressure` projection — the same source as the Web UI's composer ring: current context length over the model's context window, shifting to the warning and error palette as occupancy climbs. Clicking it opens a breakdown panel (click again or `Esc` to close) with the occupancy reading and the heuristic composition shares — system prompt, tools, and messages — matching the Web UI's ContextMeter dialog. The meter hides itself when the profile has no token-meter projections.
+The row above the composer is the **session stats strip**, the TUI's counterpart of the web chat's stats line: the same figures in the same order, separated by `│`:
 
-The footer reports session tokens, average time to first token, decode throughput, and cache-hit rate, folded from durable step, chunk, and message events.
+```
+▤ 1 turn · 2 steps│LLM 1.3s · tools 1.2s│TTFT avg 400ms · 20.0 tok/s│cache 55%│in 110 · out 30
+```
+
+- `turns` / `steps` count **closed steps** (`step/end`), so failed, cancelled, and max-tokens steps count too. `LLM` is `step/start` → assembled reply; `tools` pairs `tool/call` → `tool/result`.
+- `TTFT avg` is the per-step average time to first token; `tok/s` is decode throughput (first token → assembled reply over the reported output tokens).
+- `cache` is the prompt-side cache-hit share (cache reads over all billed input); `in` / `out` are the session's billed input and output tokens.
+- A narrow terminal drops trailing groups **whole** and marks the elision with `│…` rather than cutting a figure in half; the window always carries the complete set.
+- A session with no closed step and no billed tokens hides the strip entirely and gives the row back to the transcript.
+
+The whole strip is a click target. Clicking it — or the context meter at the right end of the status row (`ctx ▓▓░░ 32K/128K 25%`), or typing `/stats` — opens the **session stats window**; click again, click elsewhere, or press `Esc` to close. The window breaks the same line into labelled rows (`usage` / `duration` / `speed` / `tokens` / `cache`) and adds the context-occupancy reading with its heuristic composition — system prompt, tools, and messages — matching the Web UI's ContextMeter dialog.
+
+Figures come from the same sources as the Web UI, projection-first with the plugin's own fold as the fallback: `tokenUsage`, `contextPressure`, and `contextBreakdown` are mounted by `dsh-base`'s token-meter row, while `sessionStats` is mounted only by the web app bundle — so the TUI folds the durable `step` / `chunk` / `message` / `tool` events by the same rules. A missing projection falls back for that figure alone, and a figure nobody can supply stays hidden instead of printing a zero.
 
 ### Settings
 
@@ -370,7 +385,7 @@ More detail, in Chinese: [docs/用户手册.md](docs/用户手册.md).
 - `dsh tui` as a bare subcommand needs a shell alias — the stock launcher hardcodes only `web` and `plugin`.
 - Harness slash commands need a live session; on the title screen the TUI tells you to start one first.
 - Deferring a question with `Esc` does not cancel the tool call — it delegates, and with no other answerer the tool call fails. Per-question skip (as the Web UI composer offers) is not implemented.
-- `--resume`, Settings → Manage sessions, and the context meter depend on services mounted by `@deepseek-ai/dsh-base` (`sessionQuery`, `sessionProjections`); a hand-built profile must provide them.
+- `--resume`, Settings → Manage sessions, the context meter, and the stats strip depend on services mounted by `@deepseek-ai/dsh-base` (`sessionQuery`, `sessionProjections`); a hand-built profile must provide them. The `sessionStats` projection is a web-app-layer row, so the TUI folds those figures from the session log itself when no profile mounts it.
 - The deferred dsh install on Windows waits for the TUI that scheduled it, not for every dsh process on the machine — close other TUI windows (and `dsh web`) before it runs.
 
 ## Layout
@@ -380,7 +395,7 @@ lib/index.js         plugin entry: agents, events, input, commands, approvals, u
 lib/startup.js       command-line provider (tuiStartup service)
 lib/term.js          terminal engine (raw mode, screen, key decoding)
 lib/ui.js            responsive view model + renderer (includes the question modal)
-lib/metrics.js       durable event telemetry fold
+lib/metrics.js       whole-session stats + token usage fold (web stats strip / tokenUsage port)
 lib/interrupt.js     Ctrl+C lifecycle state
 lib/web-settings.js  shared WebUI settings projection
 lib/updates.js       in-app update manager (npm registry + installs)

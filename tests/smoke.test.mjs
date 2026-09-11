@@ -5,7 +5,7 @@ import { dirname, join } from "node:path"
 import { decodeKey, Screen, makeStyle, Terminal } from "../lib/term.js"
 import { App, THEME, noteFromContext, inputRows, cursorAtVisual, inboxMessageText } from "../lib/ui.js"
 import { InterruptState } from "../lib/interrupt.js"
-import { SessionMetrics } from "../lib/metrics.js"
+import { SessionMetrics, cacheHitPercent, mergeSessionStats } from "../lib/metrics.js"
 import { SETTINGS_MENU, loadModelSettings, loadProviderModels, loadWebSettings, saveWebSetting } from "../lib/web-settings.js"
 import { DSH_PACKAGE, TUI_PACKAGE, parseRegistryView, isPrerelease, coreSegments, latestStable, updateStatus, compareVersions, buildUpdateItems, buildVersionItems, resolveActiveProfile, stderrSummary, dshLockEntries, installResultFrom, deferredInstallSpec, installMarkerPath, readInstallMarker, writeInstallMarker } from "../lib/updates.js"
 import { renderMarkdown } from "../lib/markdown.js"
@@ -145,13 +145,66 @@ eq("second idle Ctrl+C exits", interrupt.interrupt({ running: false, now: 2000 }
 eq("exit is idempotent", interrupt.requestExit(), false)
 
 // ---- session metrics ----
+// The fold mirrors the host's `sessionStats` + `tokenUsage` projection units:
+// turn/step counts come from `step/end`, LLM time from step/start ->
+// assembled message, TTFT per step, decode over steps that also report output
+// tokens, and tool time from matched call/result pairs.
 const metrics = new SessionMetrics()
 metrics.consume({ type: "step/start", time: 1000, data: { turn: 1, step: 1 } })
 metrics.consume({ type: "assistant/chunk", time: 1300, data: { turn: 1, step: 1, chunk: { type: "text-delta", text: "hi" } } })
 metrics.consume({ type: "assistant/message", time: 2300, data: { turn: 1, step: 1, usage: { inputTokens: 40, outputTokens: 20, cacheReadTokens: 60 } } })
-eq("TTFT average", metrics.snapshot().ttftAverageMs, 300)
-eq("decode throughput", metrics.snapshot().tokensPerSecond, 20)
-eq("disjoint cache hit rate", metrics.snapshot().cacheHitRate, 60)
+metrics.consume({ type: "step/end", time: 2400, data: { turn: 1, step: 1 } })
+metrics.consume({ type: "step/start", time: 3000, data: { turn: 1, step: 2 } })
+metrics.consume({ type: "assistant/chunk", time: 3400, data: { turn: 1, step: 2, chunk: { type: "reasoning-delta", text: "" } } })
+metrics.consume({ type: "assistant/chunk", time: 3500, data: { turn: 1, step: 2, chunk: { type: "reasoning-delta", text: "why" } } })
+metrics.consume({ type: "assistant/message", time: 4000, data: { turn: 1, step: 2, usage: { inputTokens: 10, outputTokens: 10 } } })
+metrics.consume({ type: "step/end", time: 4100, data: { turn: 1, step: 2 } })
+metrics.consume({ type: "tool/call", time: 5000, data: { callId: "c1" } })
+metrics.consume({ type: "tool/result", time: 6200, data: { message: { source: { callId: "c1" } } } })
+metrics.consume({ type: "tool/call", time: 6300, data: { callId: "orphan" } })
+metrics.consume({ type: "turn/end", time: 7000, data: { turn: 1 } })
+const metricsSnapshot = metrics.snapshot()
+eq("TTFT average", metricsSnapshot.ttftAverageMs, 400)
+eq("decode throughput", metricsSnapshot.tokensPerSecond, 20)
+eq("disjoint cache hit rate", metricsSnapshot.cacheHitRate, "55")
+eq("durable turns and steps", [metricsSnapshot.turns, metricsSnapshot.steps], [1, 2])
+eq("model wall time sums every assembled step", metricsSnapshot.llmMs, 2300)
+eq("tool wall time pairs call with result", metricsSnapshot.toolMs, 1200)
+eq("an unmatched call is dropped at turn end", metricsSnapshot.toolMs, 1200)
+eq("billing buckets stay disjoint", [metricsSnapshot.billedInputTokens, metricsSnapshot.uncachedInputTokens, metricsSnapshot.outputTokens], [110, 50, 30])
+eq("a repeated usage sample for one step replaces the earlier one", (() => {
+  const fold = new SessionMetrics()
+  fold.consume({ type: "assistant/chunk", time: 1, data: { turn: 1, step: 1, chunk: { type: "usage", usage: { inputTokens: 4, outputTokens: 1 } } } })
+  fold.consume({ type: "assistant/message", time: 2, data: { turn: 1, step: 1, usage: { inputTokens: 9, outputTokens: 3 } } })
+  return [fold.snapshot().uncachedInputTokens, fold.snapshot().outputTokens]
+})(), [9, 3])
+eq("a cancelled step still counts", (() => {
+  const fold = new SessionMetrics()
+  fold.consume({ type: "step/start", time: 1, data: { turn: 1, step: 1 } })
+  fold.consume({ type: "step/end", time: 2, data: { turn: 1, step: 1 } })
+  return [fold.snapshot().turns, fold.snapshot().steps, fold.snapshot().ttftAverageMs]
+})(), [1, 1, undefined])
+eq("no billed input leaves the cache reading absent", (() => {
+  const fold = new SessionMetrics()
+  fold.consume({ type: "assistant/message", time: 1, data: { turn: 1, step: 1, usage: { inputTokens: 0, outputTokens: 7 } } })
+  return fold.snapshot().cacheHitRate
+})(), undefined)
+// Cache-hit precision, ported from the web stats strip.
+eq("near-total cache hit keeps a decimal below 100", cacheHitPercent(1, 19_999, 0), "99.995")
+eq("full cache hit reads 100", cacheHitPercent(0, 10_000, 0), "100")
+eq("integer cache hit rounds", cacheHitPercent(40, 60, 0), "60")
+// The projection is authoritative wherever the profile serves it.
+const mergedMetrics = mergeSessionStats(metricsSnapshot, {
+  sessionStats: { turns: 3, steps: 9, llmMs: 5000, toolMs: 100, ttftMs: 900, ttftSteps: 3, decodeMs: 2000, decodeTokens: 400 },
+  tokenUsage: { uncachedInputTokens: 200, outputTokens: 50, cacheReadTokens: 800, cacheWriteTokens: 0 },
+})
+eq("projection figures win", [mergedMetrics.turns, mergedMetrics.steps, mergedMetrics.toolMs], [3, 9, 100])
+eq("projection readings are recomputed", [mergedMetrics.ttftAverageMs, mergedMetrics.tokensPerSecond, mergedMetrics.cacheHitRate], [300, 200, "80"])
+eq("an absent projection keeps the local fold", mergeSessionStats(metricsSnapshot, null), metricsSnapshot)
+eq("token usage is merged on its own", (() => {
+  const merged = mergeSessionStats(metricsSnapshot, { tokenUsage: { uncachedInputTokens: 1, outputTokens: 2, cacheReadTokens: 3, cacheWriteTokens: 4 } })
+  return [merged.turns, merged.billedInputTokens]
+})(), [1, 8])
 
 // ---- shared WebUI settings ----
 const sections = new Map([
@@ -545,9 +598,9 @@ ok("user label", rendered.includes("You"))
 eq("single assistant header per request", (rendered.match(/dsh\s+·/g) ?? []).length, 1)
 ok("no left session rail", !rendered.includes("Test session"))
 ok("multiline composer", rendered.includes("first line") && rendered.includes("second line"))
-ok("TTFT footer", rendered.includes("TTFT avg 300ms"))
-ok("throughput footer", rendered.includes("20.0 tok/s"))
-ok("cache footer", rendered.includes("cache 60%"))
+ok("stats strip renders above the composer", rendered.includes("TTFT avg 400ms"))
+ok("stats strip throughput", rendered.includes("20.0 tok/s"))
+ok("stats strip cache hit", rendered.includes("cache 55%"))
 ok("bottom actions removed", !app.hitRegions.some((region) => region.kind === "new-session" && region.y === 29) && !app.hitRegions.some((region) => region.kind === "settings"))
 ok("no session mouse target in transcript", !app.hitRegions.some((region) => region.kind === "session"))
 const composerRegion = app.hitRegions.find((region) => region.kind === "composer")
@@ -836,20 +889,82 @@ panelApp.setContextMeter({
   pressure: { pressureTokens: 32_000, contextWindow: 128_000 },
   breakdown: { systemTokens: 120, toolsTokens: 21_500, messageTokens: 477_000 },
 })
-panelApp.contextMeterOpen = true
+panelApp.statsOpen = true
 const panelRendered = panelApp.render().cells.map((r) => r.map((c) => c.ch).join("")).join(NL2)
-ok("context panel headline", panelRendered.includes("context") && panelRendered.includes("used 25%"))
-ok("context panel figures", panelRendered.includes("~32K / 128K"))
-ok("context panel legend", panelRendered.includes("system prompt") && panelRendered.includes("tools") && panelRendered.includes("messages"))
-ok("context panel hidden behind settings", !panelRendered.includes("Settings") || panelRendered.includes("Esc close"))
+ok("stats window headline", panelRendered.includes("session stats") && panelRendered.includes("used 25%"))
+ok("stats window context figures", panelRendered.includes("~32K / 128K"))
+ok("stats window legend", panelRendered.includes("system prompt") && panelRendered.includes("tools") && panelRendered.includes("messages"))
+ok("stats window closes on Esc", panelRendered.includes("Esc close"))
 // Zero occupancy draws no fill segment but still shows the figures.
 const zeroApp = new App(fakeTerm)
 zeroApp.setSession({ id: "t1", title: "Test" })
 zeroApp.setContextMeter({ pressure: { pressureTokens: 0, contextWindow: 128_000 } })
-zeroApp.contextMeterOpen = true
+zeroApp.statsOpen = true
 const zeroPanelRendered = zeroApp.render().cells.map((r) => r.map((c) => c.ch).join("")).join(NL2)
 ok("zero occupancy still shows figures", zeroPanelRendered.includes("~0 / 128K"))
 ok("context palette distinct", THEME.contextSystem !== THEME.contextTools && THEME.contextTools !== THEME.contextMessages)
+
+// ---- session stats strip and window (web stats strip / token usage port) ----
+const stripApp = new App(fakeTerm)
+stripApp.setSession({ id: "t1", title: "Test", model: "m" })
+stripApp.setStats({
+  stats: metricsSnapshot,
+  pressure: { pressureTokens: 32_000, contextWindow: 128_000 },
+  breakdown: { systemTokens: 120, toolsTokens: 21_500, messageTokens: 477_000 },
+})
+const stripRows = stripApp.render().cells.map((r) => r.map((c) => c.ch).join(""))
+const stripRow = stripRows.find((line) => line.includes("▤"))
+ok("stats strip sits above the composer", Boolean(stripRow))
+ok("stats strip carries counts", stripRow.includes("1 turn") && stripRow.includes("2 steps"))
+ok("stats strip carries durations", stripRow.includes("LLM 2.3s") && stripRow.includes("tools 1.2s"))
+ok("stats strip carries speeds", stripRow.includes("TTFT avg 400ms") && stripRow.includes("20.0 tok/s"))
+ok("stats strip carries billing", stripRow.includes("cache 55%") && stripRow.includes("in 110 · out 30"))
+ok("stats strip is a full-row click target", stripApp.hitRegions.some((region) => region.kind === "stats" && region.width === 100 && region.height === 1))
+ok("status row drops the token cluster the strip owns", !stripRows[stripRows.length - 1].includes("↑"))
+// A narrow terminal drops trailing groups whole rather than cutting a figure,
+// and marks the elision; a wide one also seats the `/stats` hint.
+const narrowStripApp = new App({ cols: 60, rows: 30, started: true })
+narrowStripApp.setSession({ id: "t1", title: "Test" })
+narrowStripApp.setMetrics(metricsSnapshot)
+const narrowStripRow = narrowStripApp.render().cells.map((r) => r.map((c) => c.ch).join("")).find((line) => line.includes("▤"))
+ok("narrow strip keeps whole groups and elides", narrowStripRow.includes("1 turn · 2 steps") && narrowStripRow.includes("│…") && !narrowStripRow.includes("cache"))
+ok("narrow strip never cuts a figure in half", !narrowStripRow.includes("cach"))
+const wideStripApp = new App({ cols: 140, rows: 30, started: true })
+wideStripApp.setSession({ id: "t1", title: "Test" })
+wideStripApp.setMetrics(metricsSnapshot)
+const wideStripRow = wideStripApp.render().cells.map((r) => r.map((c) => c.ch).join("")).find((line) => line.includes("▤"))
+ok("wide strip advertises the command", wideStripRow.includes("/stats") && !wideStripRow.includes("│…"))
+// A session with nothing to report keeps the row for the transcript.
+const emptyStatsApp = new App(fakeTerm)
+emptyStatsApp.setSession({ id: "t1", title: "Test" })
+const emptyStatsRows = emptyStatsApp.render().cells.map((r) => r.map((c) => c.ch).join(""))
+ok("stats strip hidden with nothing to report", !emptyStatsRows.some((line) => line.includes("▤")))
+ok("hidden strip registers no click target", !emptyStatsApp.hitRegions.some((region) => region.kind === "stats"))
+eq("hidden strip returns its row to the transcript", emptyStatsApp._layout().statsH, 0)
+// The window stands on its own without a context meter, and is reachable
+// through the `/stats` command (index.js) as well as by clicking the strip.
+const noMeterApp = new App(fakeTerm)
+noMeterApp.setSession({ id: "t1", title: "Test" })
+noMeterApp.setMetrics(metricsSnapshot)
+noMeterApp.statsOpen = true
+const noMeterRendered = noMeterApp.render().cells.map((r) => r.map((c) => c.ch).join("")).join(NL2)
+ok("stats window opens without a context meter", noMeterRendered.includes("session stats") && noMeterRendered.includes("click the strip or /stats"))
+ok("stats window explains the missing occupancy", noMeterRendered.includes("context occupancy appears once a request reports usage"))
+ok("stats window lists counts, speed and billing", noMeterRendered.includes("2 steps") && noMeterRendered.includes("TTFT avg 400ms") && noMeterRendered.includes("miss 50"))
+// A brand-new session still opens it: the counts row says what is missing.
+const freshStatsApp = new App(fakeTerm)
+freshStatsApp.setSession({ id: "t1", title: "Test" })
+freshStatsApp.statsOpen = true
+const freshStatsRendered = freshStatsApp.render().cells.map((r) => r.map((c) => c.ch).join("")).join(NL2)
+ok("stats window handles a session with no closed step", freshStatsRendered.includes("no completed step yet"))
+// The window yields to a modal overlay.
+const overlayStatsApp = new App(fakeTerm)
+overlayStatsApp.setSession({ id: "t1", title: "Test" })
+overlayStatsApp.setMetrics(metricsSnapshot)
+overlayStatsApp.statsOpen = true
+overlayStatsApp.overlay = "help"
+const overlayStatsRendered = overlayStatsApp.render().cells.map((r) => r.map((c) => c.ch).join("")).join(NL2)
+ok("stats window hidden behind a modal", !overlayStatsRendered.includes("session stats"))
 
 // Tool invocations surface their primary value without leaking JSON field names.
 const toolApp = new App(fakeTerm)
