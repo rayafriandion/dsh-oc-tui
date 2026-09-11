@@ -197,7 +197,7 @@ It prefers the `dsh` on `PATH` and falls back to `npx --yes @deepseek-ai/dsh`. I
 | `Up` / `Down` | Move the caret across a multi-line prompt; on the first/last row, step through input history. |
 | `Left` / `Right` | Move the caret within the input box. |
 | `PgUp` / `PgDn` | Scroll the transcript. |
-| `Esc` | Close the context-meter panel, the thinking slider, or help; cancel an approval. |
+| `Esc` | Close the context-meter panel, the thinking slider, or help; cancel an approval; cancel a running turn; clear the prompt you are typing. |
 | `Esc Esc` | Idle with an empty prompt: open the rewind picker. |
 | `y` / `n` | Answer an inline approval prompt. |
 
@@ -206,6 +206,8 @@ It prefers the `dsh` on `PATH` and falls back to `npx --yes @deepseek-ai/dsh`. I
 ### Slash commands
 
 Built in: `/help` `/settings` `/new` `/resume <id>` `/model <id>` `/provider <route>` `/rewind` `/clear` `/cancel` `/quit` (`/exit` also works).
+
+**Rewind.** `Esc Esc` (or `/rewind`) lists the prompts of the live session. Restoring the **conversation** forks a new session from the events before the chosen prompt — the parent session is left untouched on disk, exactly as the harness's own `session/fork` does — and the picker lands on the most recent prompt, so `Enter` twice rewinds the last turn. `/rewind <n|last> [conversation|code|both]` runs it without the picker. Restoring **files** is best-effort and fenced: it needs a git worktree (anywhere else the rewind reports `files not restored (not a git worktree)` and changes nothing), it rewrites tracked files from `HEAD` without touching the index, and it removes an untracked file only when the transcript's first recorded write to that path is at or after the rewind point. Everything it overwrites or deletes is copied to `$DSH_HOME/rewind-backups/<sessionId>/<timestamp>/` first, and the result line names that directory. Because the log stores no file contents, a tracked file returns to its last commit, not to its exact state at the rewind point.
 
 Harness commands — `/compact`, `/goal`, `/plan`, … — are forwarded to `ctx.commands` and run without a model turn. They need a live session: on the title screen the TUI answers `/<name>: start a session first` instead of dropping the command silently.
 
