@@ -222,6 +222,35 @@ for (const [COLS, ROWS] of [[40, 30], [80, 24], [100, 30], [140, 42]]) {
   ok("closing rewind overlay leaves no residue", gridDiff(emulatePaint(writes, COLS, ROWS), screen, COLS, ROWS).length === 0)
 }
 
+// The workspace row names the path a live session is rooted in. A long path must
+// be shortened without breaking the row's width budget or leaving residue, and a
+// wide-rune path must be clipped by cells rather than by code units.
+for (const [COLS, ROWS, cwd, branch] of [
+  [140, 42, "D:\\Projects\\DeepSeekHarnessPlugins", "main"],
+  [100, 30, "D:\\Projects\\DeepSeekHarnessPlugins\\deepseek-harness-tui", "feat/rewind"],
+  [80, 24, "D:\\Projects\\DeepSeekHarnessPlugins\\deepseek-harness-tui", ""],
+  [60, 20, "C:\\Users\\Sanchess\\AppData\\Local\\Temp\\a-very-long-scratch-directory-name", "feature/very-long-branch-name"],
+  [40, 24, "D:\\项目\\一个非常长的中文工作区目录名字", "main"],
+  [40, 24, "D:\\Projects\\x", ""],
+  [80, 18, "D:\\Projects\\deepseek-harness-tui", "main"],
+]) {
+  const { term, writes } = paintCapture(COLS, ROWS)
+  const app = new App({ cols: COLS, rows: ROWS, on() {} })
+  app.setSession({ id: "s", title: "Workspace row" })
+  app.setWorkspace({ workingDirectory: cwd, gitBranch: branch })
+  const screen = app.render(); term.paint(screen)
+  const diff = gridDiff(emulatePaint(writes, COLS, ROWS), screen, COLS, ROWS)
+  ok(`${COLS}x${ROWS} workspace row no residue`, diff.length === 0, JSON.stringify(diff.slice(0, 3)))
+  const wrong = rowWidths(writes).filter((r) => r.cols !== 0 && r.cols !== COLS)
+  ok(`${COLS}x${ROWS} workspace row keeps ${COLS} columns`, wrong.length === 0, JSON.stringify(wrong.slice(0, 3)))
+  const rows = screen.cells.map((row) => row.map((c) => c.ch).join(""))
+  const painted = rows.some((row) => row.includes(cwd))
+  if (ROWS >= 20) {
+    ok(`${COLS}x${ROWS} workspace row shows the path`, painted || rows.some((row) => row.includes("WORKSPACE")),
+      JSON.stringify(rows[1].slice(0, COLS)))
+  }
+}
+
 console.log("")
 if (failed > 0) { console.log(failed + " render test(s) failed"); process.exit(1) }
 console.log("all render tests passed")
