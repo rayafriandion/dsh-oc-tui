@@ -211,6 +211,18 @@ eq("a truthy non-decision is not an approval", approvalOutcome(true), { status: 
     { answers: { tags: ["x", "y"] } })
 }
 
+// ---- adapt: a select field drops a free-text answer ----
+// The protocol validator only accepts option ids for a select field, so a
+// free-text answer is unrepresentable rather than something to pass through.
+{
+  const { decoders } = toTuiQuestions([
+    { id: "pick", label: "Pick", kind: "select", options: [{ id: "a", label: "Alpha" }] },
+  ])
+  eq("a free-text answer to a select field is omitted, not emitted as a non-id",
+    fromTuiAnswers(decoders, { answers: [{ id: "pick", selected: [], custom: "something else" }] }),
+    { answers: {} })
+}
+
 // ---- adapt: multi-select keeps its array even with a custom answer ----
 // The TUI keeps `selected` populated for a multi-select when a custom answer is
 // also present (lib/index.js:1097-1103), and the standard's answer type has no
