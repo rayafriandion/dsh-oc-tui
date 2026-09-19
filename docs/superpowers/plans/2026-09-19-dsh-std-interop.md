@@ -2558,9 +2558,12 @@ Expected: TUI 正常启动，标题栏与 composer 正常渲染。
 2. 触发一次需要审批的工具调用 → 审批模态出现，`y` 允许、`n` 拒绝都能正常继续；
 3. 输入 `/help`、`/stats`、`/settings` → 与改动前行为一致；
 4. `Ctrl+P` → Settings 正常打开，凭据项仍以掩码显示；
-5. `Esc Esc` 或 `/rewind` → rewind 正常。
+5. `Esc Esc` 或 `/rewind` → rewind 正常；
+6. **触发 `ask_user_question` 工具调用，然后按 Esc。** 这一项是新增的，因为 Task 7 的重构顺带修掉了一个既存 bug：重构前 `askQuestions` 里的 `defer` 引用了 `next`，而 `next` 只绑定在 `ctx.on('user-questions/request', (req, next) => ...)` 的箭头作用域里，`askQuestions` 定义在 `apply()` 作用域——所以按 Esc 会抛 `ReferenceError: next is not defined`，`settled` 已被置位且模态已被 `detach()` 清除，但 promise 永不 settle，工具调用挂死。重构后 `onDefer: next` 从正确的作用域传入，Esc 变成真正的委派（与那段代码原本的注释意图一致）。
 
-Expected: 五项全部与改动前一致。**任何一项回归都必须回到 Task 7 修复**——`awaitApproval` / `waitForQuestions` 的抽取是这次改动里风险最高的一处。
+  因此这一项的期望是：**按 Esc 后模态关闭，且工具调用正常结束**（委派给下一个 answerer；没有其他 answerer 时服务以 `NO_PROVIDER` 拒绝，这是诚实的结果）。若观察到挂死，说明修复没生效。
+
+Expected: 前五项与改动前一致；第六项**应当与改动前不同**——改动前会挂死，改动后正常结束。**任何一项回归都必须回到 Task 7 修复**——`awaitApproval` / `waitForQuestions` 的抽取是这次改动里风险最高的一处。
 
 - [ ] **Step 3: 验证 private 复制路径**
 
