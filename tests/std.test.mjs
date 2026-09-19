@@ -2,7 +2,7 @@
 // adapters between standard and TUI shapes, and the protocol shims.
 // Run: node tests/std.test.mjs  (no dsh environment required)
 import { readFileSync } from "node:fs"
-import { fileURLToPath } from "node:url"
+import { fileURLToPath, pathToFileURL } from "node:url"
 import { dirname, join } from "node:path"
 import { registerLiveTui, liveTui } from "../lib/bridge.js"
 import { parseManifest, projectManifest } from "@dsh-std/manifest"
@@ -117,6 +117,32 @@ eq("no live TUI initially", liveTui(), null)
   eq("overrides records the cordis bundle patch",
     manifest.overrides.map((o) => o.target + ":" + o.kind),
     ["@deepseek-ai/dsh-base:patch"])
+}
+
+// ---- facet ----
+{
+  // The adapter takes `namespace.default ?? namespace.facet` and requires
+  // `activate` to be a function; without @dsh-std/sdk installed the module must
+  // still load and report degraded rather than throw, because a throw during
+  // mountProfileComponents rolls back every other component in the profile.
+  const mod = await import(pathToFileURL(join(repoRoot, "lib/facet.js")).href)
+  const facet = mod.default
+  ok("facet default export exists", facet !== undefined && facet !== null)
+  eq("facet exports exactly activate/deactivate/snapshot",
+    Object.keys(facet).sort(), ["activate", "deactivate", "snapshot"])
+  eq("facet.activate is a function", typeof facet.activate, "function")
+  eq("facet.deactivate is a function", typeof facet.deactivate, "function")
+  eq("facet.snapshot is a function", typeof facet.snapshot, "function")
+
+  const degraded = await facet.snapshot()
+  eq("facet reports degraded with no live TUI", degraded.state, "degraded")
+  ok("facet explains why it is degraded",
+    typeof degraded.message === "string" && degraded.message.length > 0)
+
+  const release = registerLiveTui({ tag: "facet-test" })
+  eq("facet reports active with a live TUI", (await facet.snapshot()).state, "active")
+  release()
+  eq("facet returns to degraded after the TUI unloads", (await facet.snapshot()).state, "degraded")
 }
 
 console.log("")
