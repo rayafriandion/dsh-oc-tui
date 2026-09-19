@@ -1689,6 +1689,7 @@ git commit -m "feat(tui): expose the TUI to the std facet through a live handle"
 
 **Files:**
 - Modify: `lib/facet.js`（`activateProtocols`）
+- Modify: `package.json`（`scripts.check` 补上 `lib/std/*`）
 - Test: `tests/std.test.mjs`
 
 **Interfaces:**
@@ -1767,15 +1768,25 @@ async function activateProtocols(context) {
 }
 ```
 
-- [ ] **Step 4: 运行测试确认通过**
+- [ ] **Step 4: 把 `lib/std/*` 补进 `scripts.check`**
+
+Task 3 把 `lib/bridge.js` 与 `lib/facet.js` 加进了 `scripts.check`，但那时 `lib/std/` 还不存在。现在补上——`node --check` 是本仓库唯一的语法关卡，漏掉的文件只有被测试 import 时才会被间接解析：
+
+```json
+    "check": "node --check lib/index.js && node --check lib/ui.js && node --check lib/term.js && node --check lib/metrics.js && node --check lib/interrupt.js && node --check lib/web-settings.js && node --check lib/updates.js && node --check lib/rewind.js && node --check lib/bridge.js && node --check lib/facet.js && node --check lib/std/adapt.js && node --check lib/std/presentation.js && node --check bin/dsh-oc-tui.js"
+```
+
+（`lib/std/commands.js` 由 Task 9 创建，Task 9 负责把它也加进去。）
+
+- [ ] **Step 5: 运行测试确认通过**
 
 Run: `node tests/std.test.mjs`
 Expected: 全部 `ok`
 
-- [ ] **Step 5: 提交**
+- [ ] **Step 6: 提交**
 
 ```bash
-git add lib/facet.js tests/std.test.mjs
+git add lib/facet.js package.json tests/std.test.mjs
 git commit -m "feat(tui): register the presentation implementations on facet activation"
 ```
 
@@ -1785,6 +1796,7 @@ git commit -m "feat(tui): register the presentation implementations on facet act
 
 **Files:**
 - Create: `lib/std/commands.js`
+- Modify: `package.json`（`scripts.check` 加上 `lib/std/commands.js`）
 - Test: `tests/std.test.mjs`
 
 **Interfaces:**
@@ -1986,7 +1998,7 @@ Expected: 全部 `ok`
 - [ ] **Step 5: 提交**
 
 ```bash
-git add lib/std/commands.js tests/std.test.mjs
+git add lib/std/commands.js package.json tests/std.test.mjs
 git commit -m "feat(tui): provide a CommandRuntime scoped to the TUI command line"
 ```
 
