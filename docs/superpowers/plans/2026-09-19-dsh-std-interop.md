@@ -1825,7 +1825,7 @@ git commit -m "feat(tui): provide and register a CommandRuntime over the local c
 **Files:**
 - Modify: `lib/ui.js`（`App` 增加 `pendingSecret` 状态与绘制）
 - Modify: `lib/index.js`（`waitForSecret` + 句柄 `interact` 的 `secret-input` 分支）
-- Test: `tests/std.test.mjs`
+- Test: `tests/std.test.mjs`、`tests/render.test.mjs`
 
 **Interfaces:**
 - Consumes: `App.pendingSecret`（本 task 新增）
@@ -1886,6 +1886,58 @@ Expected: FAIL — 实际得到 `["question","approval"]`，因为 `presentation
     if (this.pendingSecret) this._paintSecret(screen, cols, rows)
 ```
 
+- [ ] **Step 4: 给 secret 模态写渲染测试**
+
+这个模态是新增的绘制路径，而 `tests/render.test.mjs` 已经为每个覆盖层（rewind、stats 条、note 折叠）
+备好了 `paintCapture` / `emulatePaint` / `gridDiff` 的 "leaves no residue" 断言模式，新增覆盖层应当享有同等保障。
+
+在 `tests/render.test.mjs` 末尾（`console.log("")` 之前）加入：
+
+```js
+// The standalone secret prompt is a new painted overlay; like every other
+// overlay it must not strand cells behind it when it opens, updates or closes.
+for (const [COLS, ROWS] of [[80, 24], [60, 20], [120, 40]]) {
+  const { term, writes } = paintCapture(COLS, ROWS)
+  const app = new App({ cols: COLS, rows: ROWS, on() {} })
+  app.setSession({ id: "s", title: "Secret" })
+  let screen = app.render(); term.paint(screen)
+
+  app.pendingSecret = { label: "Provider API key", description: "Paste the key", draft: "", cursor: 0, error: null, settle() {} }
+  screen = app.render(); term.paint(screen)
+  ok(`${COLS}x${ROWS} secret prompt open leaves no residue`,
+    gridDiff(emulatePaint(writes, COLS, ROWS), screen, COLS, ROWS).length === 0)
+
+  app.pendingSecret.draft = "sk-abcdefghijklmnop"
+  screen = app.render(); term.paint(screen)
+  ok(`${COLS}x${ROWS} secret prompt typing leaves no residue`,
+    gridDiff(emulatePaint(writes, COLS, ROWS), screen, COLS, ROWS).length === 0)
+  const rows = screen.cells.map((row) => row.map((c) => c.ch).join(""))
+  // The value is masked: the plaintext must never reach the screen buffer,
+  // where it would be readable by anything that dumps the frame.
+  ok(`${COLS}x${ROWS} secret prompt masks the value`,
+    !rows.some((row) => row.includes("sk-abcdefghijklmnop")))
+  ok(`${COLS}x${ROWS} secret prompt draws the label`,
+    rows.some((row) => row.includes("Provider API key")))
+
+  app.pendingSecret.error = "a value is required"
+  screen = app.render(); term.paint(screen)
+  ok(`${COLS}x${ROWS} secret prompt error leaves no residue`,
+    gridDiff(emulatePaint(writes, COLS, ROWS), screen, COLS, ROWS).length === 0)
+
+  app.pendingSecret = null
+  screen = app.render(); term.paint(screen)
+  ok(`${COLS}x${ROWS} closing the secret prompt leaves no residue`,
+    gridDiff(emulatePaint(writes, COLS, ROWS), screen, COLS, ROWS).length === 0)
+}
+```
+
+- [ ] **Step 5: 运行渲染测试确认失败**
+
+Run: `node tests/render.test.mjs`
+Expected: FAIL — `this._paintSecret is not a function`（Step 3 只加了状态与调用点，绘制函数在 Step 6 才写）。
+
+- [ ] **Step 6: 实现 `_paintSecret`**
+
 在 `_paintQuestions` 之后加入绘制函数（沿用设置页已有的掩码渲染思路，`lib/ui.js:2236`）：
 
 ```js
@@ -1933,9 +1985,11 @@ Expected: FAIL — 实际得到 `["question","approval"]`，因为 `presentation
   }
 ```
 
+
 用到的 API 都是 `lib/term.js` 与 `lib/ui.js` 里已存在的：`Screen.fill(x, y, width, ch, style)`（单行）、`Screen.set`、`Screen.text`、`makeStyle`、`truncateWidth`，以及 `THEME` 的 `text` / `textMuted` / `backgroundElement` / `border` / `accent` / `error`。注意 `THEME` 里**没有** `foreground` 或 `muted` 这两个键。
 
-- [ ] **Step 4: 在 `lib/index.js` 实现等待与分支**
+
+- [ ] **Step 7: 在 `lib/index.js` 实现等待与分支**
 
 在 `waitForQuestions` 之后加入：
 
@@ -2032,7 +2086,7 @@ Expected: FAIL — 实际得到 `["question","approval"]`，因为 `presentation
     }
 ```
 
-- [ ] **Step 5: 更新 operations**
+- [ ] **Step 8: 更新 operations**
 
 把 `lib/std/presentation.js` 的 `presentationOperations` 换成：
 
@@ -2045,15 +2099,15 @@ export function presentationOperations() {
 }
 ```
 
-- [ ] **Step 6: 运行全部测试**
+- [ ] **Step 9: 运行全部测试**
 
 Run: `npm run check && npm test`
-Expected: 全绿
+Expected: 全绿（`npm test` 会跑到 `tests/render.test.mjs`，即 Step 4 新增的 secret 模态断言）
 
-- [ ] **Step 7: 提交**
+- [ ] **Step 10: 提交**
 
 ```bash
-git add lib/ui.js lib/index.js lib/std/presentation.js tests/std.test.mjs
+git add lib/ui.js lib/index.js lib/std/presentation.js tests/std.test.mjs tests/render.test.mjs
 git commit -m "feat(tui): add the standalone secret prompt and claim secret-input"
 ```
 
@@ -2411,6 +2465,11 @@ Expected: profile 回到干净状态。
 - [ ] **Step 5: 记录结论**
 
 在 `docs/dsh-std-接入说明.md` 末尾追加一节「验证记录」，写明确切日期、验证过的五项交互、以及任何未覆盖的路径。若某项未能验证，如实写明「未验证」而不是省略。
+
+必须如实记录的两条未覆盖路径：
+
+- **secret 模态无法在此手动验证。** 它只由标准协议的 `secret-input` 请求触发，而验证用的 profile 里没有任何 std 消费方会发出该请求。它的保障来自 Task 11 Step 4 的渲染测试，不是来自这次冒烟——文档里要这样写，不能写成"已验证"。
+- **`commandCatalog` / `executeCommand` 句柄没有真实调用方。** 同理，只有 std 消费方会走 `CommandRuntime`；本仓库自有的斜杠命令走的是 `runCommand` 的本地 switch，不经过句柄。
 
 ```bash
 git add docs/dsh-std-接入说明.md
