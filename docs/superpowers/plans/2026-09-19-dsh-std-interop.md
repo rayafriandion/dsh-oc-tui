@@ -857,14 +857,19 @@ export function toTuiQuestions(fields) {
       // — and a collision would give two options the same display label and
       // overwrite each other's id mapping, so a selection would silently decode
       // to the wrong option.
+      // When the base itself ends in " (n)", continue that counter from the
+      // root, so the literal "Same (2)" collides into "Same (3)" rather than
+      // the unhelpful "Same (2) (2)". A lone "Same (2)" keeps its label.
       const used = new Set()
       for (const option of field.options ?? []) {
         const base = String(option.label)
+        const suffixed = /^(.*) \((\d+)\)$/.exec(base)
+        const root = suffixed ? suffixed[1] : base
         let label = base
-        let n = 1
+        let n = suffixed ? Number(suffixed[2]) : 1
         while (used.has(label)) {
           n += 1
-          label = base + ' (' + n + ')'
+          label = root + ' (' + n + ')'
         }
         used.add(label)
         idByLabel[label] = String(option.id)
