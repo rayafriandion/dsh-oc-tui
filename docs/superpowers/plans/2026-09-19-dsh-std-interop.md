@@ -2183,6 +2183,34 @@ Task 6 写入的断言现在写死为两项，本 task 要把它扩到三项。�
     ["question", "approval", "secret-input"])
   eq("presentationOperations matches the published support",
     presentationOperations(), ["question", "approval", "secret-input"])
+
+  // The declared operations and the handlers must not drift apart: a kind that
+  // is declared but not served is only discovered when a consumer calls it.
+  // The factory rejects a kind outside spec.operations, so this pins both sides.
+  {
+    const impls = createPresentationImplementations(PARTICIPANT)
+    const ui = impls.find((i) => i.protocol.kind === "UserInteraction")
+    const served = []
+    const release = registerLiveTui({
+      async interact(request) { served.push(request.kind); return { status: "cancelled" } },
+    })
+    for (const kind of presentationOperations()) {
+      const request = kind === "approval"
+        ? { kind, requestId: "r", invocationId: "i", origin: "t", action: "a", summary: "s" }
+        : kind === "question"
+          ? { kind, requestId: "r", invocationId: "i", origin: "t", fields: [{ id: "f", label: "F", kind: "text" }] }
+          : { kind, requestId: "r", invocationId: "i", origin: "t", label: "L" }
+      await ui.handle("interact", request, {})
+    }
+    eq("every declared operation reaches the handler", served, presentationOperations())
+
+    let undeclaredThrew = false
+    try {
+      await ui.handle("interact", { kind: "open-external", requestId: "r", invocationId: "i", origin: "t" }, {})
+    } catch { undeclaredThrew = true }
+    ok("a kind outside the declared operations is rejected", undeclaredThrew)
+    release()
+  }
 ```
 
 Run: `node tests/std.test.mjs`
