@@ -1,7 +1,14 @@
 // Tests for the @dsh-std interop layer: the live-TUI registry, the pure
 // adapters between standard and TUI shapes, and the protocol shims.
 // Run: node tests/std.test.mjs  (no dsh environment required)
+import { readFileSync } from "node:fs"
+import { fileURLToPath } from "node:url"
+import { dirname, join } from "node:path"
 import { registerLiveTui, liveTui } from "../lib/bridge.js"
+import { parseManifest, projectManifest } from "@dsh-std/manifest"
+
+const here = dirname(fileURLToPath(import.meta.url))
+const repoRoot = join(here, "..")
 
 let failed = 0
 const eq = (name, actual, expected) => {
@@ -51,6 +58,65 @@ eq("no live TUI initially", liveTui(), null)
   // no-live-TUI state, and a handle left registered here would break them.
   releaseB()
   eq("the registry is empty again for the sections that follow", liveTui(), null)
+}
+
+// ---- manifest ----
+{
+  const pkg = JSON.parse(readFileSync(join(repoRoot, "package.json"), "utf8"))
+  const raw = readFileSync(join(repoRoot, "dsh-plugin.json"), "utf8")
+  const manifest = parseManifest(raw, { source: "dsh-plugin.json" })
+
+  eq("manifest id", manifest.id, "io.github.rayafriandion.dsh-oc-tui")
+  eq("manifest version tracks package.json", manifest.version, pkg.version)
+  eq("manifest license tracks package.json", manifest.license, pkg.license)
+  eq("facet entry", manifest.facets.host.entry, "lib/facet.js")
+  eq("facet apiVersion", manifest.facets.host.apiVersion, "v1alpha1")
+
+  // The TUI consumes Command resources (it reads other components' commands).
+  // Presentation and ContributionHost are things the TUI *provides*, and
+  // Community v0.15 has no `supports` field, so they must NOT appear here.
+  eq("requires.contracts is exactly the Command resource",
+    manifest.requires.contracts,
+    [{ apiVersion: "commands.dsh/v1alpha1", kind: "Command" }])
+
+  const projected = projectManifest(manifest)
+  const facet = projected.spec.facets[0]
+  eq("projects to one host facet", projected.spec.facets.length, 1)
+  eq("activation coordinate", facet.activation.apiVersion, "lifecycle.dsh/v1alpha1")
+  eq("activation kind", facet.activation.kind, "FacetModule")
+  eq("activation module", facet.activation.spec.module, "lib/facet.js")
+
+  // Commands must carry placements, which the simple contributes.commands route
+  // drops (its projection keeps only { title }). Without placements a command is
+  // publishable on every surface, so a web UI would list /settings too.
+  const commands = facet.extensions.filter((e) => e.kind === "Command")
+  eq("nine TUI-owned commands contributed", commands.length, 9)
+  ok("every command is scoped to the TUI command line",
+    commands.every((e) => JSON.stringify(e.spec.placements)
+      === JSON.stringify([{ apiVersion: "tui.dsh/v1alpha1", kind: "CommandLine" }])))
+  ok("every command carries a contribution id label",
+    commands.every((e) => typeof e.metadata.labels["dsh.std/contribution-id"] === "string"))
+
+  const names = commands.map((e) => e.metadata.name).sort()
+  eq("contributed command names", names,
+    ["cancel", "clear", "help", "new", "quit", "resume", "rewind", "settings", "stats"])
+  // /model and /provider are deliberately absent: runCommand asks
+  // ctx.commands.find() first, so the harness owns them when it registers them.
+  ok("model and provider are not claimed", !names.includes("model") && !names.includes("provider"))
+
+  const quit = commands.find((e) => e.metadata.name === "quit")
+  eq("quit keeps the exit alias", quit.spec.aliases, ["exit"])
+
+  const perms = facet.permissions.map((p) => p.action + " @ " + p.spec.scope).sort()
+  eq("storage permissions are scoped to the component id", perms, [
+    "storage.local.read @ io.github.rayafriandion.dsh-oc-tui",
+    "storage.local.write @ io.github.rayafriandion.dsh-oc-tui",
+  ])
+
+  // The bundle patch is a real host patch and must be declared as one.
+  eq("overrides records the cordis bundle patch",
+    manifest.overrides.map((o) => o.target + ":" + o.kind),
+    ["@deepseek-ai/dsh-base:patch"])
 }
 
 console.log("")
