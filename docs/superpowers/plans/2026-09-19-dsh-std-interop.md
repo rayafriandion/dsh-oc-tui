@@ -82,6 +82,13 @@ const eq = (name, actual, expected) => {
   else { console.log("FAIL " + name + "  got " + a + "  want " + e); failed++ }
 }
 const ok = (name, cond) => cond ? console.log("ok   " + name) : (console.log("FAIL " + name), failed++)
+// For assertions that a call does not throw: a bare call would abort the whole
+// file on failure, so the throw becomes a counted FAIL and the run keeps
+// reporting the remaining assertions.
+const noThrow = (name, fn) => {
+  try { fn(); console.log("ok   " + name) }
+  catch (error) { console.log("FAIL " + name + "  threw " + error.message); failed++ }
+}
 
 // ---- bridge ----
 eq("no live TUI initially", liveTui(), null)
@@ -1018,6 +1025,16 @@ import { Terminal } from "../lib/term.js"
     ok("osc52Only writes the actual text",
       writes.join("").includes(Buffer.from("secret", "utf8").toString("base64")))
     eq("osc52Only still reports success", privateWritten, true)
+
+    // This call must NOT reach the real fallback: the platform is spoofed to
+    // win32 and this term reports a TTY, so leaving isTTY set would launch
+    // powershell.exe for real and overwrite the host clipboard. Clearing output
+    // keeps full discriminating power, because the option destructure runs
+    // before the fallback guard.
+    term.output = {}
+    noThrow("a null options value does not throw", () => term.copyToClipboard("x", null))
+    eq("a null options value still returns a boolean",
+      typeof term.copyToClipboard("x", null), "boolean")
   } finally {
     Object.defineProperty(process, "platform", originalPlatform)
   }
@@ -1052,7 +1069,10 @@ Expected: FAIL — `osc52Only never spawns the PowerShell fallback`（当前实�
     // contract this function is relied on for.
     // `spawn` is injectable so tests can observe the fallback without
     // launching powershell.exe; production always uses the module import.
-    const { osc52Only = false, spawn: spawnFn = spawn } = options ?? {}
+    const { osc52Only = false, spawn: injectedSpawn } = options ?? {}
+    // `?? spawn`, not a destructure default: `{ spawn: null }` must fall back to
+    // the real spawn rather than making spawnFn null.
+    const spawnFn = injectedSpawn ?? spawn
     let written = false
     try {
       this.write('\x1b]52;c;' + Buffer.from(text, 'utf8').toString('base64') + '\x1b\\')
