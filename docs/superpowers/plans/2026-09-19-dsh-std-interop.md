@@ -1538,7 +1538,7 @@ git commit -m "feat(tui): publish Presentation support through the protocol fact
 
 只改最后一行。**这一步不能省**：漏掉它，`askQuestions` 会在每次 `user-questions/request` 时同步抛 `ReferenceError`，问题模态完全不工作——比改动前更糟。
 
-- [ ] **Step 5: 注册活体句柄**
+- [ ] **Step 4: 注册活体句柄**
 
 在 `lib/index.js` 顶部的 import 区加入：
 
@@ -1619,7 +1619,7 @@ import { notificationLevel, approvalOutcome, toTuiQuestions, fromTuiAnswers } fr
       releaseLiveTui()
 ```
 
-- [ ] **Step 6: 写契约测试**
+- [ ] **Step 5: 写契约测试**
 
 在 `tests/std.test.mjs` 的 `console.log("")` 之前加入。这个测试不启动 TUI，只断言 `lib/index.js` 暴露的适配行为与句柄契约一致——用 `lib/std/adapt.js` 的纯函数 + 一个模拟句柄：
 
@@ -1666,17 +1666,17 @@ import { notificationLevel, approvalOutcome, toTuiQuestions, fromTuiAnswers } fr
 }
 ```
 
-- [ ] **Step 7: 运行全部测试**
+- [ ] **Step 6: 运行全部测试**
 
 Run: `npm run check && npm test`
 Expected: 四个测试文件全绿；`check` 静默通过
 
-- [ ] **Step 8: 手动验证既有路径没坏**
+- [ ] **Step 7: 手动验证既有路径没坏**
 
 Run: `node tests/smoke.test.mjs && node tests/render.test.mjs && node tests/rewind.test.mjs`
 Expected: 全绿。这三个文件覆盖了 `App` 的渲染与 rewind 的纯函数；审批/问答的抽取改的是 `lib/index.js`，它不被单测覆盖，所以**必须**在下一步用真实 TUI 冒烟。
 
-- [ ] **Step 9: 提交**
+- [ ] **Step 8: 提交**
 
 ```bash
 git add lib/index.js tests/std.test.mjs
