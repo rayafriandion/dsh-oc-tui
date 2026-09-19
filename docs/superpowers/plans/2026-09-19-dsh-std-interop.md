@@ -459,10 +459,11 @@ Expected: FAIL — `ENOENT ... lib/facet.js`
 // implementations whose handlers forward through lib/bridge.js to whichever TUI
 // instance is live, and reports `degraded` when none is.
 //
-// @dsh-std/sdk is loaded dynamically and defensively. A throw from this module
-// makes the adapter's mountProfileComponents roll back EVERY component it had
-// already mounted in the profile, so a missing peer dependency here must
-// degrade, never throw.
+// The only optional peer that can throw is @dsh-std/presentation, imported
+// dynamically by activateProtocols. A throw from this module makes the
+// adapter's mountProfileComponents roll back EVERY component it had already
+// mounted in the profile, so that import is guarded and a missing peer
+// degrades, never throws.
 
 const DEGRADED_MESSAGE =
   'dsh-oc-tui is activated by its cordis bundle rows (cordis.patch.yml); '
@@ -470,16 +471,12 @@ const DEGRADED_MESSAGE =
 
 export default {
   async activate(context) {
-    const { liveTui } = await import('./bridge.js')
-    let sdk
-    try {
-      sdk = await import('@dsh-std/sdk')
-    } catch {
-      // Peer dependency absent: nothing to publish. snapshot() already reports
-      // the state, so activation stays a no-op rather than an error.
-      return
-    }
-    const dispose = await activateProtocols(sdk, context, liveTui)
+    // No presence probe for @dsh-std/sdk: nothing in lib/ consumes it, and the
+    // only optional peer that can actually throw is @dsh-std/presentation,
+    // which activateProtocols guards itself. A probe here would silently
+    // suppress the registration whenever sdk alone is absent, even though
+    // nothing needs it.
+    const dispose = await activateProtocols(context)
     context.scope.add(dispose)
   },
 
@@ -1706,7 +1703,7 @@ git commit -m "feat(tui): expose the TUI to the std facet through a live handle"
   const mod = await import(pathToFileURL(join(repoRoot, "lib/facet.js")).href)
   const registered = []
   const context = {
-    identity: { component: "io.github.rayafriandion.dsh-oc-tui", facet: "host" },
+    identity: { component: "io.github.rayafriandion.dsh-oc-tui", facet: "host", participantId: "test/facet-participant" },
     plan: {},
     scope: { signal: new AbortController().signal, add() {} },
     protocols: {
@@ -1724,8 +1721,16 @@ git commit -m "feat(tui): expose the TUI to the std facet through a live handle"
   const kinds = registered.map((r) => r.support.kind).sort()
   eq("activation publishes the three presentation kinds", kinds, ["CopyText", "Notification", "UserInteraction"])
   ok("nothing else is published yet", registered.length === 3)
-  ok("every published implementation is an object",
-    registered.every((r) => typeof r.handle === "function"))
+  ok("every published implementation is a CapabilityImplementation",
+    registered.every((r) => typeof r.implementation?.handle === "function"))
+  // The adapter rejects any implementation whose participantId differs from the
+  // facet's activation participant id, so its source is pinned rather than
+  // assumed: a hard-coded or undefined id would otherwise stay green.
+  eq("staged participant ids come from context.identity",
+    registered.map((r) => r.implementation.participantId),
+    ["test/facet-participant", "test/facet-participant", "test/facet-participant"])
+  eq("each implementation is staged with its own protocol",
+    registered.map((r) => r.implementation.protocol === r.support), [true, true, true])
 }
 ```
 
@@ -2025,7 +2030,7 @@ git commit -m "feat(tui): provide a CommandRuntime scoped to the TUI command lin
   const mod = await import(pathToFileURL(join(repoRoot, "lib/facet.js")).href)
   const registered = []
   const context = {
-    identity: { component: "io.github.rayafriandion.dsh-oc-tui", facet: "host" },
+    identity: { component: "io.github.rayafriandion.dsh-oc-tui", facet: "host", participantId: "test/facet-participant" },
     plan: {},
     scope: { signal: new AbortController().signal, add() {} },
     protocols: {
