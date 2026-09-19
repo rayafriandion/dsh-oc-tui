@@ -556,8 +556,16 @@ const PARTICIPANT = "test/dsh-oc-tui"
   const kinds = registered.map((r) => r.support.kind).sort()
   eq("activation publishes the three presentation kinds", kinds, ["CopyText", "Notification", "UserInteraction"])
   ok("nothing else is published yet", registered.length === 3)
-  ok("every published implementation is an object",
-    registered.every((r) => typeof r.implementation.handle === "function"))
+  ok("every published implementation is a CapabilityImplementation",
+    registered.every((r) => typeof r.implementation?.handle === "function"))
+  // The adapter rejects any implementation whose participantId differs from the
+  // facet's activation participant id, so its source is pinned rather than
+  // assumed: a hard-coded or undefined id would otherwise stay green.
+  eq("staged participant ids come from context.identity",
+    registered.map((r) => r.implementation.participantId),
+    ["test/facet-participant", "test/facet-participant", "test/facet-participant"])
+  eq("each implementation is staged with its own protocol",
+    registered.map((r) => r.implementation.protocol === r.support), [true, true, true])
 }
 
 console.log("")
