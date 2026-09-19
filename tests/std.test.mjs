@@ -527,6 +527,39 @@ const PARTICIPANT = "test/dsh-oc-tui"
   release()
 }
 
+// ---- facet activation registers the presentation implementations ----
+{
+  const mod = await import(pathToFileURL(join(repoRoot, "lib/facet.js")).href)
+  const registered = []
+  const context = {
+    // The adapter rejects an implementation whose participantId differs from the
+    // facet's activation participant id, so the fake must carry one.
+    identity: {
+      component: "io.github.rayafriandion.dsh-oc-tui",
+      facet: "host",
+      participantId: "test/facet-participant",
+    },
+    plan: {},
+    scope: { signal: new AbortController().signal, add() {} },
+    protocols: {
+      agreement: () => undefined,
+      client: () => undefined,
+      implement(support, implementation) {
+        registered.push({ support, implementation })
+        return () => {}
+      },
+    },
+    extensions: { publish: () => () => {} },
+  }
+  await mod.default.activate(context)
+  // @dsh-std/sdk is a devDependency here, so activation proceeds.
+  const kinds = registered.map((r) => r.support.kind).sort()
+  eq("activation publishes the three presentation kinds", kinds, ["CopyText", "Notification", "UserInteraction"])
+  ok("nothing else is published yet", registered.length === 3)
+  ok("every published implementation is an object",
+    registered.every((r) => typeof r.implementation.handle === "function"))
+}
+
 console.log("")
 if (failed > 0) { console.log(failed + " test(s) failed"); process.exit(1) }
 console.log("all std tests passed")
