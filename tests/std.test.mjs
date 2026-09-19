@@ -493,8 +493,8 @@ const PARTICIPANT = "test/dsh-oc-tui"
 {
   const seen = []
   const handle = {
-    async interact(request) {
-      seen.push(request)
+    async interact(request, context) {
+      seen.push(request, context?.signal)
       if (request.kind === "approval") {
         const { approvalOutcome } = await import("../lib/std/adapt.js")
         return approvalOutcome("rejected")
@@ -508,13 +508,20 @@ const PARTICIPANT = "test/dsh-oc-tui"
   const ui = createPresentationHandlers().userInteraction
   const release = registerLiveTui(handle)
 
-  const res = await ui.interact({ kind: "approval", action: "shell", summary: "run rm", risk: "high" })
+  const signal = new AbortController().signal
+  const res = await ui.interact(
+    { kind: "approval", action: "shell", summary: "run rm", risk: "high" }, { signal })
   eq("the handle receives the std request unchanged",
     seen[0], { kind: "approval", action: "shell", summary: "run rm", risk: "high" })
+  eq("the handle receives the protocol context, so it can honour aborts",
+    seen[1], signal)
   eq("a denial surfaces as a submitted denial", res,
     { status: "submitted", value: { decision: "denied" } })
 
-  eq("an unsupported request shape is cancelled, not approved",
+  // This block drives the bare handler with a stub handle, so it pins the
+  // pass-through, not lib/index.js. The stub answers anything that is not an
+  // approval with `cancelled`, and that value must come back unchanged.
+  eq("a non-approval result is passed through unchanged",
     await ui.interact({ kind: "question", fields: [] }), { status: "cancelled" })
 
   release()
