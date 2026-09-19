@@ -96,6 +96,22 @@ eq("no live TUI initially", liveTui(), null)
   eq("release is idempotent", liveTui(), null)
 }
 
+// The two assertions above cannot distinguish a guard-free release from a
+// guarded one: a second release on an already-empty registry trivially yields
+// null. This case is what actually pins the `released` flag — re-registering
+// the same handle and then calling the spent release must not clear the new
+// registration.
+{
+  const h = { tag: "re-registered" }
+  const spent = registerLiveTui(h)
+  spent()
+  const release2 = registerLiveTui(h)
+  spent()
+  eq("a spent release does not clear a re-registration", liveTui(), h)
+  release2()
+  eq("the re-registration can still be released", liveTui(), null)
+}
+
 {
   const a = { tag: "a" }
   const b = { tag: "b" }
