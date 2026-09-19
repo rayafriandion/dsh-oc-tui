@@ -486,6 +486,40 @@ const PARTICIPANT = "test/dsh-oc-tui"
     (await handlers.notification.notify({ text: "hi" })).status, "unavailable")
 }
 
+// ---- index.js wiring contract ----
+// lib/index.js needs a live cordis ctx, so it is not importable here. What is
+// testable without one is the contract the handle must satisfy: the exact
+// request/response shapes the facet's handlers will pass through.
+{
+  const seen = []
+  const handle = {
+    async interact(request) {
+      seen.push(request)
+      if (request.kind === "approval") {
+        const { approvalOutcome } = await import("../lib/std/adapt.js")
+        return approvalOutcome("rejected")
+      }
+      return { status: "cancelled" }
+    },
+  }
+  // The bare handler is what the facet wires to the live TUI, and testing it
+  // directly keeps this block about the handle contract rather than about the
+  // factory's request validation.
+  const ui = createPresentationHandlers().userInteraction
+  const release = registerLiveTui(handle)
+
+  const res = await ui.interact({ kind: "approval", action: "shell", summary: "run rm", risk: "high" })
+  eq("the handle receives the std request unchanged",
+    seen[0], { kind: "approval", action: "shell", summary: "run rm", risk: "high" })
+  eq("a denial surfaces as a submitted denial", res,
+    { status: "submitted", value: { decision: "denied" } })
+
+  eq("an unsupported request shape is cancelled, not approved",
+    await ui.interact({ kind: "question", fields: [] }), { status: "cancelled" })
+
+  release()
+}
+
 console.log("")
 if (failed > 0) { console.log(failed + " test(s) failed"); process.exit(1) }
 console.log("all std tests passed")
