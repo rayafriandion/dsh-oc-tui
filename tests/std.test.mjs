@@ -28,9 +28,13 @@ eq("no live TUI initially", liveTui(), null)
   const a = { tag: "a" }
   const b = { tag: "b" }
   const releaseA = registerLiveTui(a)
-  registerLiveTui(b)
+  const releaseB = registerLiveTui(b)
   releaseA()
   eq("stale release must not clear a newer registration", liveTui(), b)
+  // Leave the registry empty: later sections of this file assert on the
+  // no-live-TUI state, and a handle left registered here would break them.
+  releaseB()
+  eq("the registry is empty again for the sections that follow", liveTui(), null)
 }
 
 console.log("")
