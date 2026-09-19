@@ -1717,7 +1717,7 @@ git commit -m "feat(tui): expose the TUI to the std facet through a live handle"
     extensions: { publish: () => () => {} },
   }
   await mod.default.activate(context)
-  // @dsh-std/sdk is a devDependency here, so activation proceeds.
+  // @dsh-std/presentation is a devDependency here, so the guarded import succeeds.
   const kinds = registered.map((r) => r.support.kind).sort()
   eq("activation publishes the three presentation kinds", kinds, ["CopyText", "Notification", "UserInteraction"])
   ok("nothing else is published yet", registered.length === 3)
