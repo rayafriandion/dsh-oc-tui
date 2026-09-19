@@ -2056,7 +2056,51 @@ git commit -m "feat(tui): provide a CommandRuntime scoped to the TUI command lin
 Run: `node tests/std.test.mjs`
 Expected: FAIL — 期望四个 kind，实际三个
 
-- [ ] **Step 3: 在句柄上实现 catalog 与 execute**
+- [ ] **Step 3: 修 Task 9 测试里的两处精度问题**
+
+Task 9 的审查发现两条断言没有测到它们名字所说的东西，趁在同一个文件里一起修。
+
+**(a) "no live TUI" 的断言其实没走到那条分支。** 它们传 `{ contextId: "s1" }` 而不带 `placement`，于是在 `placementMatches` 就短路返回空 catalog，根本到不了 `if (!handle)`。有活体 TUI 时它们同样会通过。改成带上 placement，真正钉住 `liveTui() === null` 这条分支：
+
+```js
+  eq("catalog with no live TUI returns an empty catalog",
+    await runtime.catalog({ contextId: "s1", placement: COMMAND_PLACEMENT }),
+    { apiVersion: "commands.dsh/v1alpha1", commands: [] })
+  eq("execute with no live TUI returns undefined",
+    await runtime.execute({ contextId: "s1", line: "/help", placement: COMMAND_PLACEMENT }), undefined)
+```
+
+**(b) 与清单的交叉校验应当是直接的。** 现在比对的是硬编码字面量，于是九个命令名同时存在于三处（清单、`TUI_OWNED_COMMANDS`、测试字面量）。改成从清单投影里取：
+
+```js
+  // Derived from the manifest rather than restated, so the two cannot drift:
+  // the manifest is the discovery surface and TUI_OWNED_COMMANDS is the
+  // execution path, and a divergence would be invisible until a consumer
+  // called a command the TUI does not own.
+  {
+    const raw = readFileSync(join(repoRoot, "dsh-plugin.json"), "utf8")
+    const projected = projectManifest(parseManifest(raw, { source: "dsh-plugin.json" }))
+    const fromManifest = projected.spec.facets[0].extensions
+      .filter((e) => e.kind === "Command")
+      .map((e) => e.metadata.name)
+      .sort()
+    eq("TUI_OWNED_COMMANDS matches the manifest's contributed commands",
+      [...TUI_OWNED_COMMANDS].sort(), fromManifest)
+  }
+```
+
+（`readFileSync`、`join`、`repoRoot`、`parseManifest`、`projectManifest` 在该文件顶部已经可用。）
+
+**(c) 补一条 `result` 为空的断言**，钉住 `lib/std/commands.js` 里那个未被覆盖的分支：
+
+```js
+  eq("a handle that runs nothing yields undefined",
+    await runtime.execute({ contextId: "s1", line: "/help", placement: COMMAND_PLACEMENT }), undefined)
+```
+
+配一个 `executeCommand: async () => undefined` 的桩句柄来触发它。
+
+- [ ] **Step 4: 在句柄上实现 catalog 与 execute**
 
 在 `lib/index.js` 的 import 区加入：
 
@@ -2156,7 +2200,7 @@ import { TUI_OWNED_COMMANDS } from './std/commands.js'
 
 （其余 `runCommand` 函数体不动。所有既有调用点 `runCommand(line)` 继续合法，因为第二个参数可选。）
 
-- [ ] **Step 4: 在 facet 注册**
+- [ ] **Step 5: 在 facet 注册**
 
 把 `lib/facet.js` 的 `activateProtocols` 换成：
 
@@ -2184,12 +2228,12 @@ async function activateProtocols(context) {
 }
 ```
 
-- [ ] **Step 5: 运行全部测试**
+- [ ] **Step 6: 运行全部测试**
 
 Run: `npm run check && npm test`
 Expected: 全绿
 
-- [ ] **Step 6: 提交**
+- [ ] **Step 7: 提交**
 
 ```bash
 git add lib/index.js lib/facet.js tests/std.test.mjs
