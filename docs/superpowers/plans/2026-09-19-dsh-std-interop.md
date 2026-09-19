@@ -991,9 +991,9 @@ import { Terminal } from "../lib/term.js"
   term.output = { isTTY: true }
   const fakeSpawn = (cmd, args) => { spawned.push([cmd, args]); return { on() {} } }
 
-  // The spoof MUST be restored even if an assertion throws: every later section
-  // in this file would otherwise run under a faked platform. (The harness's
-  // eq/ok do not throw today, but a future edit that does would cascade.)
+  // The spoof is restored unconditionally: the harness's eq/ok do not throw
+  // today, but a section added below this one, or a future assertion that does
+  // throw, would otherwise run under a faked platform.
   const originalPlatform = Object.getOwnPropertyDescriptor(process, "platform")
   Object.defineProperty(process, "platform", { value: "win32", configurable: true })
   try {
@@ -1010,9 +1010,14 @@ import { Terminal } from "../lib/term.js"
 
     spawned.length = 0
     writes.length = 0
-    term.copyToClipboard("secret", { osc52Only: true, spawn: fakeSpawn })
+    const privateWritten = term.copyToClipboard("secret", { osc52Only: true, spawn: fakeSpawn })
     eq("osc52Only never spawns the PowerShell fallback", spawned.length, 0)
     ok("osc52Only still writes OSC 52", writes.join("").includes("]52;c;"))
+    // The payload must be this text, not a stale or empty one: an
+    // implementation that wrote nothing would still satisfy the check above.
+    ok("osc52Only writes the actual text",
+      writes.join("").includes(Buffer.from("secret", "utf8").toString("base64")))
+    eq("osc52Only still reports success", privateWritten, true)
   } finally {
     Object.defineProperty(process, "platform", originalPlatform)
   }
@@ -1042,13 +1047,18 @@ Expected: FAIL — `osc52Only never spawns the PowerShell fallback`（当前实�
   // the same user can read back. Private text must stay on the in-band path.
   copyToClipboard(text, options = {}) {
     if (typeof text !== 'string' || text.length === 0) return false
-    const spawnFn = options.spawn ?? spawn
+    // `?? {}` as well as the default: an explicit null would otherwise throw
+    // on the destructure, outside every try/catch, breaking the never-throws
+    // contract this function is relied on for.
+    // `spawn` is injectable so tests can observe the fallback without
+    // launching powershell.exe; production always uses the module import.
+    const { osc52Only = false, spawn: spawnFn = spawn } = options ?? {}
     let written = false
     try {
       this.write('\x1b]52;c;' + Buffer.from(text, 'utf8').toString('base64') + '\x1b\\')
       written = true
     } catch { /* output unavailable */ }
-    if (!options.osc52Only && process.platform === 'win32' && this.output?.isTTY) {
+    if (!osc52Only && process.platform === 'win32' && this.output?.isTTY) {
       try {
         const b64 = Buffer.from(text, 'utf8').toString('base64')
         // System.Windows.Forms.Clipboard needs an STA thread; powershell.exe
