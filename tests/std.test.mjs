@@ -19,6 +19,13 @@ const eq = (name, actual, expected) => {
   else { console.log("FAIL " + name + "  got " + a + "  want " + e); failed++ }
 }
 const ok = (name, cond) => cond ? console.log("ok   " + name) : (console.log("FAIL " + name), failed++)
+// For assertions that a call does not throw: a bare call would abort the whole
+// file on failure, so the throw becomes a counted FAIL and the run keeps
+// reporting the remaining assertions.
+const noThrow = (name, fn) => {
+  try { fn(); console.log("ok   " + name) }
+  catch (error) { console.log("FAIL " + name + "  threw " + error.message); failed++ }
+}
 
 // ---- bridge ----
 eq("no live TUI initially", liveTui(), null)
@@ -367,7 +374,15 @@ eq("a truthy non-decision is not an approval", approvalOutcome(true), { status: 
       writes.join("").includes(Buffer.from("secret", "utf8").toString("base64")))
     eq("osc52Only still reports success", privateWritten, true)
 
-    eq("a null options value does not throw", typeof term.copyToClipboard("x", null), "boolean")
+    // This call must NOT reach the real fallback: the platform is spoofed to
+    // win32 and this term reports a TTY, so leaving isTTY set would launch
+    // powershell.exe for real and overwrite the host clipboard. Clearing output
+    // keeps full discriminating power, because the option destructure runs
+    // before the fallback guard.
+    term.output = {}
+    noThrow("a null options value does not throw", () => term.copyToClipboard("x", null))
+    eq("a null options value still returns a boolean",
+      typeof term.copyToClipboard("x", null), "boolean")
   } finally {
     Object.defineProperty(process, "platform", originalPlatform)
   }
