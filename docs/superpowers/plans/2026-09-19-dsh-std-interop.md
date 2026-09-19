@@ -641,6 +641,21 @@ eq("an unknown outcome is not an approval either",
     { answers: { tags: ["x", "y"] } })
 }
 
+// ---- adapt: multi-select keeps its array even with a custom answer ----
+// The TUI keeps `selected` populated for a multi-select when a custom answer is
+// also present (lib/index.js:1097-1103), and the standard's answer type has no
+// slot for "selection plus free text". The array is the representable half, so
+// the decoder must not fall through to the custom-text branch here.
+{
+  const { decoders } = toTuiQuestions([
+    { id: "tags", label: "Tags", kind: "select", multiple: true,
+      options: [{ id: "x", label: "X" }] },
+  ])
+  eq("a multi-select with a custom answer still answers with an array",
+    fromTuiAnswers(decoders, { answers: [{ id: "tags", selected: ["X"], custom: "and more" }] }),
+    { answers: { tags: ["x"] } })
+}
+
 // ---- adapt: duplicate labels must not collide ----
 {
   const { questions, decoders } = toTuiQuestions([
@@ -774,7 +789,11 @@ export function toTuiQuestions(fields) {
         question.options.push({ label })
       }
       question.multiSelect = field.multiple === true
-      decoders[question.id] = { kind: 'select', idByLabel }
+      // `multiple` must live on the decoder too: fromTuiAnswers uses it to
+      // decide between a single string and an array, and the TUI keeps
+      // `selected` populated for a multi-select even when a custom answer is
+      // also present.
+      decoders[question.id] = { kind: 'select', multiple: field.multiple === true, idByLabel }
     } else if (field.kind === 'confirm') {
       decoders[question.id] = { kind: 'confirm', idByLabel: { [CONFIRM_YES]: true, [CONFIRM_NO]: false } }
       question.options.push({ label: CONFIRM_YES }, { label: CONFIRM_NO })
