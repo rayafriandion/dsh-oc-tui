@@ -7,7 +7,7 @@ import { dirname, join } from "node:path"
 import { registerLiveTui, liveTui } from "../lib/bridge.js"
 import { parseManifest, projectManifest } from "@dsh-std/manifest"
 import { notificationLevel, approvalOutcome, toTuiQuestions, fromTuiAnswers } from "../lib/std/adapt.js"
-import { createPresentationImplementations, presentationOperations } from "../lib/std/presentation.js"
+import { createPresentationHandlers, createPresentationImplementations, presentationOperations } from "../lib/std/presentation.js"
 import { Terminal } from "../lib/term.js"
 
 const here = dirname(fileURLToPath(import.meta.url))
@@ -390,49 +390,74 @@ eq("a truthy non-decision is not an approval", approvalOutcome(true), { status: 
 }
 
 // ---- presentation shim ----
+const PARTICIPANT = "test/dsh-oc-tui"
 {
-  const impls = createPresentationImplementations()
-  const byKind = Object.fromEntries(impls.map((i) => [i.support.kind, i]))
+  const impls = createPresentationImplementations(PARTICIPANT)
+  const byKind = Object.fromEntries(impls.map((i) => [i.protocol.kind, i]))
+
   eq("publishes UserInteraction, Notification and CopyText",
     Object.keys(byKind).sort(), ["CopyText", "Notification", "UserInteraction"])
-  ok("every support is on presentation.dsh/v1alpha1",
-    impls.every((i) => i.support.apiVersion === "presentation.dsh/v1alpha1"))
+  // The adapter validates all three of these (packages/adapter-dsh/src/index.ts:1774):
+  // a missing `handle`, a mismatched participantId, or a protocol differing from
+  // the staged support each throws during mount and rolls back the whole
+  // profile, so they are pinned here rather than left to integration.
+  ok("every implementation carries the participant id",
+    impls.every((i) => i.participantId === PARTICIPANT))
+  ok("every implementation has a handle function",
+    impls.every((i) => typeof i.handle === "function"))
+  ok("every implementation is on presentation.dsh/v1alpha1",
+    impls.every((i) => i.protocol.apiVersion === "presentation.dsh/v1alpha1"))
+
   // OpenExternal and ExternalRedirect are deliberately absent: the TUI cannot
   // open a browser, and a redirect needs a loopback HTTP server.
   ok("does not claim OpenExternal", byKind.OpenExternal === undefined)
   ok("does not claim ExternalRedirect", byKind.ExternalRedirect === undefined)
 
-  eq("user interaction operations", byKind.UserInteraction.support.spec.operations,
+  eq("user interaction operations", byKind.UserInteraction.protocol.spec.operations,
     ["question", "approval"])
   eq("presentationOperations matches the published support",
     presentationOperations(), ["question", "approval"])
 
   // With no live TUI every call must report unavailable — never a decision.
-  const unavailable = { status: "unavailable" }
-  const approval = await byKind.UserInteraction.implementation.interact(
-    { kind: "approval", action: "shell", summary: "rm -rf /" })
+  const approval = await byKind.UserInteraction.handle("interact", {
+    kind: "approval", requestId: "r1", invocationId: "i1", origin: "test",
+    action: "shell", summary: "rm -rf /",
+  }, {})
   ok("approval with no live TUI is unavailable, not approved",
     approval.status === "unavailable")
-  ok("approval never fabricates a decision",
-    approval.value === undefined)
+  ok("approval never fabricates a decision", approval.value === undefined)
+  ok("unavailable carries a non-empty reason",
+    typeof approval.reason === "string" && approval.reason.length > 0)
+
   eq("question with no live TUI is unavailable",
-    (await byKind.UserInteraction.implementation.interact(
-      { kind: "question", fields: [{ id: "a", label: "A", kind: "text" }] })).status, "unavailable")
+    (await byKind.UserInteraction.handle("interact", {
+      kind: "question", requestId: "r2", invocationId: "i1", origin: "test",
+      fields: [{ id: "a", label: "A", kind: "text" }],
+    }, {})).status, "unavailable")
   eq("notification with no live TUI is unavailable",
-    (await byKind.Notification.implementation.notify({ text: "hi" })).status, "unavailable")
+    (await byKind.Notification.handle("notify",
+      { requestId: "r3", invocationId: "i1", origin: "test", text: "hi" }, {})).status,
+    "unavailable")
   eq("copy with no live TUI is unavailable",
-    (await byKind.CopyText.implementation.copyText({ text: "hi" })).status, "unavailable")
+    (await byKind.CopyText.handle("copyText",
+      { requestId: "r4", invocationId: "i1", origin: "test", text: "hi" }, {})).status,
+    "unavailable")
+
+  // An operation the support does not declare must be rejected by the factory,
+  // not silently accepted.
+  let threw = false
+  try { await byKind.UserInteraction.handle("openExternal", {}, {}) } catch { threw = true }
+  ok("an undeclared operation is rejected", threw)
 }
 
 // ---- presentation shim with a live TUI (late binding) ----
 {
   const calls = []
-  const impls = createPresentationImplementations()
-  const byKind = Object.fromEntries(impls.map((i) => [i.support.kind, i]))
+  const handlers = createPresentationHandlers()
 
-  // Register AFTER the implementations were created: the handler must look the
-  // handle up at call time, because the adapter's mount order relative to the
-  // cordis bundle rows is not guaranteed.
+  // Register AFTER the handlers were created: they must look the handle up at
+  // call time, because the adapter's mount order relative to the cordis bundle
+  // rows is not guaranteed.
   const release = registerLiveTui({
     async interact(request) {
       calls.push(["interact", request])
@@ -444,21 +469,21 @@ eq("a truthy non-decision is not an approval", approvalOutcome(true), { status: 
   })
 
   eq("approval forwards to the live TUI",
-    await byKind.UserInteraction.implementation.interact({ kind: "approval", action: "a", summary: "s" }),
+    await handlers.userInteraction.interact({ kind: "approval", action: "a", summary: "s" }),
     { status: "submitted", value: { decision: "denied" } })
   eq("question forwards to the live TUI",
-    await byKind.UserInteraction.implementation.interact({ kind: "question", fields: [] }),
+    await handlers.userInteraction.interact({ kind: "question", fields: [] }),
     { status: "submitted", value: { answers: { a: "x" } } })
   eq("notification forwards to the live TUI",
-    await byKind.Notification.implementation.notify({ text: "hi" }),
+    await handlers.notification.notify({ text: "hi" }),
     { status: "submitted", value: { accepted: true } })
   eq("copy forwards the sensitivity through",
-    (await byKind.CopyText.implementation.copyText({ text: "s", sensitivity: "private" }), calls.at(-1)[1]),
+    (await handlers.copyText.copyText({ text: "s", sensitivity: "private" }), calls.at(-1)[1]),
     { text: "s", sensitivity: "private" })
 
   release()
   eq("falls back to unavailable once the TUI unloads",
-    (await byKind.Notification.implementation.notify({ text: "hi" })).status, "unavailable")
+    (await handlers.notification.notify({ text: "hi" })).status, "unavailable")
 }
 
 console.log("")
