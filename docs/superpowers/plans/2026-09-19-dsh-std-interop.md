@@ -653,6 +653,18 @@ eq("a truthy non-decision is not an approval", approvalOutcome(true), { status: 
     { answers: { tags: ["x", "y"] } })
 }
 
+// ---- adapt: a select field drops a free-text answer ----
+// The protocol validator only accepts option ids for a select field, so a
+// free-text answer is unrepresentable rather than something to pass through.
+{
+  const { decoders } = toTuiQuestions([
+    { id: "pick", label: "Pick", kind: "select", options: [{ id: "a", label: "Alpha" }] },
+  ])
+  eq("a free-text answer to a select field is omitted, not emitted as a non-id",
+    fromTuiAnswers(decoders, { answers: [{ id: "pick", selected: [], custom: "something else" }] }),
+    { answers: {} })
+}
+
 // ---- adapt: multi-select keeps its array even with a custom answer ----
 // The TUI keeps `selected` populated for a multi-select when a custom answer is
 // also present (lib/index.js:1097-1103), and the standard's answer type has no
@@ -935,14 +947,14 @@ export function fromTuiAnswers(decoders, tuiAnswer) {
       continue
     }
 
-    // A custom answer on a single-select question replaces the selection; the
-    // TUI encodes that by clearing `selected`, so a non-empty custom is a
-    // free-text answer the standard can carry as a plain string.
-    const custom = String(entry.custom ?? '').trim()
-    if (custom !== '' && !decoder.multiple) {
-      answers[entry.id] = custom
-      continue
-    }
+    // A select field can only carry option ids: the protocol's
+    // validateQuestionAnswers rejects any answer that is not in the field's
+    // option set. The TUI lets the user type a free-text answer to any question,
+    // and that has no representation here, so it is dropped rather than emitted
+    // as a non-id that would make the whole submitted result invalid. (A text
+    // field's custom answer is the correct and only answer, and is handled
+    // above.) Task 7's handler turns the resulting missing required field into a
+    // cancel rather than a submitted result the validator would reject.
     if (decoder.multiple) {
       if (mapped.length > 0) answers[entry.id] = mapped
       continue
@@ -1120,67 +1132,108 @@ git commit -m "fix(tui): keep private clipboard text off the PowerShell argv fal
 - Test: `tests/std.test.mjs`
 
 **Interfaces:**
-- Consumes: `liveTui()`（Task 1）；`notificationLevel` / `approvalOutcome` / `toTuiQuestions` / `fromTuiAnswers`（Task 4）
+- Consumes: `liveTui()`（Task 1）
 - Produces:
-  - `createPresentationImplementations() -> [{ support, implementation }]` — 供 facet 注册
+  - `createPresentationHandlers() -> { userInteraction, notification, copyText }` — 裸 handler，便于直接测试
+  - `createPresentationImplementations(participantId) -> CapabilityImplementation[]` — 可直接交给 `context.protocols.implement(impl.protocol, impl)`
   - `presentationOperations() -> string[]` — 当前实际支持的 UserInteraction operations
   - 依赖活体句柄的成员：`handle.interact(request)`、`handle.notify(request)`、`handle.copyText(request)`
+
+**为什么必须用 `@dsh-std/presentation` 的工厂，而不能手搓对象。** adapter 会校验 facet 提交的实现（`packages/adapter-dsh/src/index.ts:1774`）：
+
+```js
+function capabilityImplementation(participantId, support, value) {
+  if (!record(value) || typeof value.handle !== 'function') throw new TypeError('staged protocol implementation must be a CapabilityImplementation')
+  if (value.participantId !== participantId) throw new TypeError(...)
+  if (!sameProtocol(value.protocol, support)) throw new TypeError(...)
+  return value
+}
+```
+
+三件事都被强制：必须有 `handle` 函数、`participantId` 必须等于该 facet 的激活 participant id、`protocol` 必须等于所声明的 support。手搓的 `{ interact, notify, copyText }` 会在挂载时抛错，而 `mountProfileComponents` 一旦抛错就会**回滚 profile 里所有已挂载组件**。所以工厂不是便利，是契约。
+
+**因此本模块静态 import `@dsh-std/presentation`。** 这与「facet 不得因 peer 缺席而抛错」并不冲突——`lib/facet.js` 必须把 `import('./std/presentation.js')` 也放进 try/catch（Task 8 会写），peer 缺席时降级为 `degraded`。
 
 - [ ] **Step 1: 写失败的测试**
 
 在 `tests/std.test.mjs` 的 import 区加入：
 
 ```js
-import { createPresentationImplementations, presentationOperations } from "../lib/std/presentation.js"
+import { createPresentationHandlers, createPresentationImplementations, presentationOperations } from "../lib/std/presentation.js"
 ```
 
 在 `console.log("")` 之前加入：
 
 ```js
 // ---- presentation shim ----
+const PARTICIPANT = "test/dsh-oc-tui"
 {
-  const impls = createPresentationImplementations()
-  const byKind = Object.fromEntries(impls.map((i) => [i.support.kind, i]))
+  const impls = createPresentationImplementations(PARTICIPANT)
+  const byKind = Object.fromEntries(impls.map((i) => [i.protocol.kind, i]))
+
   eq("publishes UserInteraction, Notification and CopyText",
     Object.keys(byKind).sort(), ["CopyText", "Notification", "UserInteraction"])
-  ok("every support is on presentation.dsh/v1alpha1",
-    impls.every((i) => i.support.apiVersion === "presentation.dsh/v1alpha1"))
+  // The adapter validates all three of these (packages/adapter-dsh/src/index.ts:1774):
+  // a missing `handle`, a mismatched participantId, or a protocol differing from
+  // the staged support each throws during mount and rolls back the whole
+  // profile, so they are pinned here rather than left to integration.
+  ok("every implementation carries the participant id",
+    impls.every((i) => i.participantId === PARTICIPANT))
+  ok("every implementation has a handle function",
+    impls.every((i) => typeof i.handle === "function"))
+  ok("every implementation is on presentation.dsh/v1alpha1",
+    impls.every((i) => i.protocol.apiVersion === "presentation.dsh/v1alpha1"))
+
   // OpenExternal and ExternalRedirect are deliberately absent: the TUI cannot
   // open a browser, and a redirect needs a loopback HTTP server.
   ok("does not claim OpenExternal", byKind.OpenExternal === undefined)
   ok("does not claim ExternalRedirect", byKind.ExternalRedirect === undefined)
 
-  eq("user interaction operations", byKind.UserInteraction.support.spec.operations,
+  eq("user interaction operations", byKind.UserInteraction.protocol.spec.operations,
     ["question", "approval"])
   eq("presentationOperations matches the published support",
     presentationOperations(), ["question", "approval"])
 
   // With no live TUI every call must report unavailable — never a decision.
-  const unavailable = { status: "unavailable" }
-  const approval = await byKind.UserInteraction.implementation.interact(
-    { kind: "approval", action: "shell", summary: "rm -rf /" })
+  const approval = await byKind.UserInteraction.handle("interact", {
+    kind: "approval", requestId: "r1", invocationId: "i1", origin: "test",
+    action: "shell", summary: "rm -rf /",
+  }, {})
   ok("approval with no live TUI is unavailable, not approved",
     approval.status === "unavailable")
-  ok("approval never fabricates a decision",
-    approval.value === undefined)
+  ok("approval never fabricates a decision", approval.value === undefined)
+  ok("unavailable carries a non-empty reason",
+    typeof approval.reason === "string" && approval.reason.length > 0)
+
   eq("question with no live TUI is unavailable",
-    (await byKind.UserInteraction.implementation.interact(
-      { kind: "question", fields: [{ id: "a", label: "A", kind: "text" }] })).status, "unavailable")
+    (await byKind.UserInteraction.handle("interact", {
+      kind: "question", requestId: "r2", invocationId: "i1", origin: "test",
+      fields: [{ id: "a", label: "A", kind: "text" }],
+    }, {})).status, "unavailable")
   eq("notification with no live TUI is unavailable",
-    (await byKind.Notification.implementation.notify({ text: "hi" })).status, "unavailable")
+    (await byKind.Notification.handle("notify",
+      { requestId: "r3", invocationId: "i1", origin: "test", text: "hi" }, {})).status,
+    "unavailable")
   eq("copy with no live TUI is unavailable",
-    (await byKind.CopyText.implementation.copyText({ text: "hi" })).status, "unavailable")
+    (await byKind.CopyText.handle("copyText",
+      { requestId: "r4", invocationId: "i1", origin: "test", text: "hi" }, {})).status,
+    "unavailable")
+
+  // An operation the support does not declare must be rejected by the factory,
+  // not silently accepted.
+  let threw = false
+  try { await byKind.UserInteraction.handle("openExternal", {}, {}) } catch { threw = true }
+  ok("an undeclared operation is rejected", threw)
 }
 
 // ---- presentation shim with a live TUI (late binding) ----
 {
   const calls = []
-  const impls = createPresentationImplementations()
-  const byKind = Object.fromEntries(impls.map((i) => [i.support.kind, i]))
+  const handlers = createPresentationHandlers()
 
-  // Register AFTER the implementations were created: the handler must look the
-  // handle up at call time, because the adapter's mount order relative to the
-  // cordis bundle rows is not guaranteed.
+  // Register AFTER the handlers were created: they must look the handle up at
+  // call time, because the adapter's mount order relative to the cordis bundle
+  // rows is not guaranteed.
   const release = registerLiveTui({
     async interact(request) {
       calls.push(["interact", request])
@@ -1192,21 +1245,21 @@ import { createPresentationImplementations, presentationOperations } from "../li
   })
 
   eq("approval forwards to the live TUI",
-    await byKind.UserInteraction.implementation.interact({ kind: "approval", action: "a", summary: "s" }),
+    await handlers.userInteraction.interact({ kind: "approval", action: "a", summary: "s" }),
     { status: "submitted", value: { decision: "denied" } })
   eq("question forwards to the live TUI",
-    await byKind.UserInteraction.implementation.interact({ kind: "question", fields: [] }),
+    await handlers.userInteraction.interact({ kind: "question", fields: [] }),
     { status: "submitted", value: { answers: { a: "x" } } })
   eq("notification forwards to the live TUI",
-    await byKind.Notification.implementation.notify({ text: "hi" }),
+    await handlers.notification.notify({ text: "hi" }),
     { status: "submitted", value: { accepted: true } })
   eq("copy forwards the sensitivity through",
-    (await byKind.CopyText.implementation.copyText({ text: "s", sensitivity: "private" }), calls.at(-1)[1]),
+    (await handlers.copyText.copyText({ text: "s", sensitivity: "private" }), calls.at(-1)[1]),
     { text: "s", sensitivity: "private" })
 
   release()
   eq("falls back to unavailable once the TUI unloads",
-    (await byKind.Notification.implementation.notify({ text: "hi" })).status, "unavailable")
+    (await handlers.notification.notify({ text: "hi" })).status, "unavailable")
 }
 ```
 
@@ -1224,22 +1277,38 @@ Expected: FAIL — `Cannot find module '.../lib/std/presentation.js'`
 // operations, not a consumer. Consumers reach them through the connection layer
 // and end up in the handlers below.
 //
+// The implementations come from @dsh-std/presentation's factories rather than
+// being hand-built objects, because the adapter validates what a facet stages:
+//
+//   capabilityImplementation(participantId, support, value)
+//     requires typeof value.handle === 'function'
+//     requires value.participantId === the facet's activation participantId
+//     requires sameProtocol(value.protocol, support)
+//
+// (packages/adapter-dsh/src/index.ts:1774). A plain handler object throws there,
+// and a throw during mount rolls back every component in the profile — so the
+// factories are not a convenience, they are the contract.
+//
 // Every handler resolves the live TUI at call time (late binding) and reports
 // `unavailable` when there is none. That is the honest answer and the safe one:
 // `unavailable` can never be mistaken for consent, which matters most for
 // approvals.
 //
 // Support is declared for what actually exists. OpenExternal is not claimed
-// (the TUI cannot open a browser, and spawning one is outside its remit), and
-// ExternalRedirect is not claimed (it needs a loopback HTTP server plus a
-// browser).
+// (the TUI cannot open a browser), and ExternalRedirect is not claimed (it needs
+// a loopback HTTP server plus a browser).
 
 import { liveTui } from '../bridge.js'
+import {
+  copyTextImplementation,
+  notificationImplementation,
+  userInteractionImplementation,
+} from '@dsh-std/presentation'
 
-export const PRESENTATION_API_VERSION = 'presentation.dsh/v1alpha1'
-
-// The operations the TUI's modals genuinely implement. `secret-input` joins
-// this list in Task 12, when its standalone prompt lands.
+// The operations the TUI's modals genuinely implement. Everything listed here
+// must have a working prompt behind it: the standard's `support` means an
+// available implementation, not an intention. `secret-input` joins this list in
+// Task 11, when its standalone prompt lands.
 export function presentationOperations() {
   return ['question', 'approval']
 }
@@ -1252,42 +1321,41 @@ async function withLiveTui(fn) {
   return fn(handle)
 }
 
-// Returns the { support, implementation } pairs the facet publishes. The shape
-// matches ActivationContext.protocols.implement(support, implementation).
-export function createPresentationImplementations() {
-  const userInteraction = {
-    async interact(request) {
-      return withLiveTui((handle) => handle.interact(request))
-    },
-  }
-  const notification = {
-    async notify(request) {
-      return withLiveTui((handle) => handle.notify(request))
-    },
-  }
-  const copyText = {
-    async copyText(request) {
-      return withLiveTui((handle) => handle.copyText(request))
-    },
-  }
-
-  return [
-    {
-      support: {
-        apiVersion: PRESENTATION_API_VERSION,
-        kind: 'UserInteraction',
-        spec: { operations: presentationOperations() },
+// The handlers on their own, so they can be tested without going through the
+// factories' dispatch and validation layer.
+export function createPresentationHandlers() {
+  return {
+    userInteraction: {
+      async interact(request) {
+        return withLiveTui((handle) => handle.interact(request))
       },
-      implementation: userInteraction,
     },
-    {
-      support: { apiVersion: PRESENTATION_API_VERSION, kind: 'Notification' },
-      implementation: notification,
+    notification: {
+      async notify(request) {
+        return withLiveTui((handle) => handle.notify(request))
+      },
     },
-    {
-      support: { apiVersion: PRESENTATION_API_VERSION, kind: 'CopyText' },
-      implementation: copyText,
+    copyText: {
+      async copyText(request) {
+        return withLiveTui((handle) => handle.copyText(request))
+      },
     },
+  }
+}
+
+// Ready for `context.protocols.implement(impl.protocol, impl)`.
+// `participantId` must be the facet's own activation participant id
+// (`context.identity.participantId`): the adapter rejects any other value.
+export function createPresentationImplementations(participantId) {
+  const handlers = createPresentationHandlers()
+  return [
+    userInteractionImplementation(
+      participantId,
+      { operations: presentationOperations() },
+      handlers.userInteraction,
+    ),
+    notificationImplementation(participantId, handlers.notification),
+    copyTextImplementation(participantId, handlers.copyText),
   ]
 }
 ```
@@ -1301,7 +1369,7 @@ Expected: 全部 `ok`
 
 ```bash
 git add lib/std/presentation.js tests/std.test.mjs
-git commit -m "feat(tui): publish Presentation support that forwards to the live TUI"
+git commit -m "feat(tui): publish Presentation support through the protocol factories"
 ```
 
 ---
@@ -1471,7 +1539,16 @@ import { notificationLevel, approvalOutcome, toTuiQuestions, fromTuiAnswers } fr
             onDefer: () => null,
           })
           if (answer === null) return { status: 'cancelled' }
-          return { status: 'submitted', value: fromTuiAnswers(decoders, answer) }
+          const value = fromTuiAnswers(decoders, answer)
+          // A required field can end up unanswered in a way the standard cannot
+          // carry — a select field the user answered with free text is dropped
+          // by the adapter. Submitting a result that is missing a required field
+          // makes the protocol validator throw, and a throw is not a clean
+          // cancel, so cancel here instead.
+          const missing = (request.fields ?? []).filter(
+            (field) => field.required === true && !Object.hasOwn(value.answers, field.id))
+          if (missing.length > 0) return { status: 'cancelled' }
+          return { status: 'submitted', value }
         } catch {
           // The modal rejects on abort; the standard distinguishes that from a
           // human decision.
@@ -1526,8 +1603,10 @@ import { notificationLevel, approvalOutcome, toTuiQuestions, fromTuiAnswers } fr
       return { status: "cancelled" }
     },
   }
-  const impls = createPresentationImplementations()
-  const ui = impls.find((i) => i.support.kind === "UserInteraction").implementation
+  // The bare handler is what the facet wires to the live TUI, and testing it
+  // directly keeps this block about the handle contract rather than about the
+  // factory's request validation.
+  const ui = createPresentationHandlers().userInteraction
   const release = registerLiveTui(handle)
 
   const res = await ui.interact({ kind: "approval", action: "shell", summary: "run rm", risk: "high" })
@@ -1569,7 +1648,7 @@ git commit -m "feat(tui): expose the TUI to the std facet through a live handle"
 - Test: `tests/std.test.mjs`
 
 **Interfaces:**
-- Consumes: `createPresentationImplementations()`（Task 6）
+- Consumes: `createPresentationImplementations(participantId)`（Task 6）
 - Produces: `activate()` 后 `context.protocols.implement` 被调用三次（UserInteraction / Notification / CopyText）
 
 - [ ] **Step 1: 写失败的测试**
@@ -1601,7 +1680,7 @@ git commit -m "feat(tui): expose the TUI to the std facet through a live handle"
   eq("activation publishes the three presentation kinds", kinds, ["CopyText", "Notification", "UserInteraction"])
   ok("nothing else is published yet", registered.length === 3)
   ok("every published implementation is an object",
-    registered.every((r) => r.implementation !== null && typeof r.implementation === "object"))
+    registered.every((r) => typeof r.handle === "function"))
 }
 ```
 
@@ -1619,9 +1698,21 @@ Expected: FAIL — `activation publishes the three presentation kinds`，实际�
 async function activateProtocols(context) {
   const disposers = []
 
-  const { createPresentationImplementations } = await import('./std/presentation.js')
-  for (const { support, implementation } of createPresentationImplementations()) {
-    disposers.push(context.protocols.implement(support, implementation))
+  // Imported dynamically so a missing @dsh-std/presentation degrades this facet
+  // instead of throwing: a throw here makes the adapter's
+  // mountProfileComponents roll back every component it had already mounted.
+  let createPresentationImplementations
+  try {
+    ({ createPresentationImplementations } = await import('./std/presentation.js'))
+  } catch {
+    return () => {}
+  }
+  // The adapter validates each staged implementation: it must expose `handle`,
+  // its participantId must equal this facet's activation participant id, and
+  // its protocol must equal the support it is staged with
+  // (packages/adapter-dsh/src/index.ts:1774).
+  for (const implementation of createPresentationImplementations(context.identity.participantId)) {
+    disposers.push(context.protocols.implement(implementation.protocol, implementation))
   }
 
   return () => {
@@ -1657,15 +1748,18 @@ git commit -m "feat(tui): register the presentation implementations on facet act
 - Produces:
   - `COMMAND_PLACEMENT = { apiVersion: 'tui.dsh/v1alpha1', kind: 'CommandLine' }`
   - `TUI_OWNED_COMMANDS = ['settings','help','stats','new','resume','clear','cancel','rewind','quit']`
-  - `createCommandRuntimeImplementation() -> implementation`，成员 `catalog(input, context)` / `execute(input, context)`
+  - `createCommandRuntimeHandler() -> { catalog(input, context), execute(input, context) }` — 裸 handler，便于直接测试
+  - `createCommandRuntimeImplementation(participantId) -> CapabilityImplementation` — 可直接交给 `context.protocols.implement(impl.protocol, impl)`
   - 依赖活体句柄的成员：`handle.commandCatalog(input)`、`handle.executeCommand(line, input)`
+
+**为什么这里也必须用工厂。** 与 Task 6 同理：adapter 对传给 `implement()` 的值强制要求 `handle` 函数、匹配的 `participantId` 与 `protocol`（`packages/adapter-dsh/src/index.ts:1774`）。`@dsh-std/command` 提供 `commandRuntimeImplementation(participantId, handler)`，返回 `{ participantId, protocol: runtimeSupport, handle(operation, input, context) }`，其 `handle` 会校验 input 并按 `'catalog'` / `'execute'` 分派。手搓的 `{ catalog, execute }` 会在挂载时被拒。
 
 - [ ] **Step 1: 写失败的测试**
 
 在 `tests/std.test.mjs` 的 import 区加入：
 
 ```js
-import { COMMAND_PLACEMENT, TUI_OWNED_COMMANDS, createCommandRuntimeImplementation } from "../lib/std/commands.js"
+import { COMMAND_PLACEMENT, TUI_OWNED_COMMANDS, createCommandRuntimeHandler, createCommandRuntimeImplementation } from "../lib/std/commands.js"
 ```
 
 在 `console.log("")` 之前加入：
@@ -1680,7 +1774,7 @@ import { COMMAND_PLACEMENT, TUI_OWNED_COMMANDS, createCommandRuntimeImplementati
     ["cancel", "clear", "help", "new", "quit", "resume", "rewind", "settings", "stats"])
   ok("model and provider are not owned", !TUI_OWNED_COMMANDS.includes("model") && !TUI_OWNED_COMMANDS.includes("provider"))
 
-  const runtime = createCommandRuntimeImplementation()
+  const runtime = createCommandRuntimeHandler()
   eq("catalog with no live TUI returns an empty catalog",
     await runtime.catalog({ contextId: "s1" }),
     { apiVersion: "commands.dsh/v1alpha1", commands: [] })
@@ -1690,7 +1784,7 @@ import { COMMAND_PLACEMENT, TUI_OWNED_COMMANDS, createCommandRuntimeImplementati
 
 {
   const calls = []
-  const runtime = createCommandRuntimeImplementation()
+  const runtime = createCommandRuntimeHandler()
   const release = registerLiveTui({
     async commandCatalog(input) {
       calls.push(["catalog", input])
@@ -1730,6 +1824,34 @@ import { COMMAND_PLACEMENT, TUI_OWNED_COMMANDS, createCommandRuntimeImplementati
 
   release()
 }
+
+// The factory result is what the adapter validates, so its shape is pinned:
+// a missing `handle`, a mismatched participantId, or a protocol differing from
+// the staged support each throws during mount and rolls back the whole profile.
+{
+  const impl = createCommandRuntimeImplementation("test/dsh-oc-tui")
+  eq("the implementation carries the participant id", impl.participantId, "test/dsh-oc-tui")
+  ok("the implementation has a handle function", typeof impl.handle === "function")
+  eq("the implementation is on the commands coordinate",
+    impl.protocol.apiVersion, "commands.dsh/v1alpha1")
+  eq("the implementation declares the CommandRuntime kind", impl.protocol.kind, "CommandRuntime")
+
+  // And the dispatch path works end to end through the factory.
+  const release = registerLiveTui({
+    async commandCatalog() { return [{ name: "help", description: "Show help" }] },
+    async executeCommand() { return { kind: "success", text: "ok" } },
+  })
+  eq("catalog dispatches through the factory",
+    (await impl.handle("catalog", { contextId: "s1", placement: COMMAND_PLACEMENT }, {})).commands.map((c) => c.name),
+    ["help"])
+  eq("execute dispatches through the factory",
+    (await impl.handle("execute", { contextId: "s1", line: "/help", placement: COMMAND_PLACEMENT }, {})).commandId,
+    "help")
+  let threw = false
+  try { await impl.handle("nonsense", {}, {}) } catch { threw = true }
+  ok("an undeclared operation is rejected", threw)
+  release()
+}
 ```
 
 - [ ] **Step 2: 运行测试确认失败**
@@ -1750,6 +1872,7 @@ Expected: FAIL — `Cannot find module '.../lib/std/commands.js'`
 // keeps a web UI from offering /settings and /rewind, which it cannot run.
 
 import { liveTui } from '../bridge.js'
+import { commandRuntimeImplementation } from '@dsh-std/command'
 
 export const COMMAND_API_VERSION = 'commands.dsh/v1alpha1'
 
@@ -1781,7 +1904,9 @@ function commandNameOf(line) {
   return match ? match[0] : ''
 }
 
-export function createCommandRuntimeImplementation() {
+// The handler on its own, so it can be tested without the factory's dispatch
+// and input validation.
+export function createCommandRuntimeHandler() {
   return {
     async catalog(input) {
       if (!placementMatches(input?.placement)) return EMPTY_CATALOG
@@ -1800,6 +1925,12 @@ export function createCommandRuntimeImplementation() {
       return { apiVersion: COMMAND_API_VERSION, commandId: commandNameOf(input.line), result }
     },
   }
+}
+
+// Ready for `context.protocols.implement(impl.protocol, impl)`.
+// `participantId` must be the facet's own activation participant id.
+export function createCommandRuntimeImplementation(participantId) {
+  return commandRuntimeImplementation(participantId, createCommandRuntimeHandler())
 }
 ```
 
@@ -1825,7 +1956,7 @@ git commit -m "feat(tui): provide a CommandRuntime scoped to the TUI command lin
 - Test: `tests/std.test.mjs`
 
 **Interfaces:**
-- Consumes: `TUI_OWNED_COMMANDS`（Task 9）、`createCommandRuntimeImplementation()`（Task 9）
+- Consumes: `TUI_OWNED_COMMANDS`（Task 9）、`createCommandRuntimeImplementation(participantId)`（Task 9）
 - Produces: 句柄成员 `commandCatalog(input) -> [{name, description}]`、`executeCommand(line, input) -> {kind, text?} | undefined`
 
 - [ ] **Step 1: 写失败的测试**
@@ -1854,8 +1985,8 @@ git commit -m "feat(tui): provide a CommandRuntime scoped to the TUI command lin
     ["CommandRuntime", "CopyText", "Notification", "UserInteraction"])
   const runtime = registered.find((r) => r.support.kind === "CommandRuntime")
   eq("the runtime is on the commands coordinate", runtime.support.apiVersion, "commands.dsh/v1alpha1")
-  ok("the runtime exposes catalog and execute",
-    typeof runtime.implementation.catalog === "function" && typeof runtime.implementation.execute === "function")
+  ok("the runtime exposes a handle function",
+    typeof runtime.implementation.handle === "function")
 }
 ```
 
@@ -1973,15 +2104,16 @@ async function activateProtocols(context) {
   const disposers = []
 
   const { createPresentationImplementations } = await import('./std/presentation.js')
-  for (const { support, implementation } of createPresentationImplementations()) {
-    disposers.push(context.protocols.implement(support, implementation))
+  for (const implementation of createPresentationImplementations(context.identity.participantId)) {
+    disposers.push(context.protocols.implement(implementation.protocol, implementation))
   }
 
-  const { createCommandRuntimeImplementation, COMMAND_API_VERSION } = await import('./std/commands.js')
-  disposers.push(context.protocols.implement(
-    { apiVersion: COMMAND_API_VERSION, kind: 'CommandRuntime' },
-    createCommandRuntimeImplementation(),
-  ))
+  const { createCommandRuntimeImplementation } = await import('./std/commands.js')
+  // The adapter validates the staged implementation and requires its
+  // participantId to equal this facet's activation participant id
+  // (packages/adapter-dsh/src/index.ts:1774).
+  const commandRuntime = createCommandRuntimeImplementation(context.identity.participantId)
+  disposers.push(context.protocols.implement(commandRuntime.protocol, commandRuntime))
 
   return () => {
     for (const dispose of disposers.reverse()) {
@@ -2031,8 +2163,7 @@ git commit -m "feat(tui): provide and register a CommandRuntime over the local c
       return { status: "submitted", value: { secret: "s3cr3t" } }
     },
   }
-  const impls = createPresentationImplementations()
-  const ui = impls.find((i) => i.support.kind === "UserInteraction").implementation
+  const ui = createPresentationHandlers().userInteraction
   const release = registerLiveTui(handle)
   eq("secret input is forwarded to the live TUI",
     await ui.interact({ kind: "secret-input", label: "API key" }),
@@ -2048,7 +2179,7 @@ git commit -m "feat(tui): provide and register a CommandRuntime over the local c
 Task 6 写入的断言现在写死为两项，本 task 要把它扩到三项。先改断言：
 
 ```js
-  eq("user interaction operations", byKind.UserInteraction.support.spec.operations,
+  eq("user interaction operations", byKind.UserInteraction.protocol.spec.operations,
     ["question", "approval", "secret-input"])
   eq("presentationOperations matches the published support",
     presentationOperations(), ["question", "approval", "secret-input"])
@@ -2298,266 +2429,41 @@ git commit -m "feat(tui): add the standalone secret prompt and claim secret-inpu
 
 ---
 
-## Task 12: `lib/std/contribution-host.js` — 第三方 UI 贡献
+## 已移出本次范围：B3 ContributionHost
 
-**Files:**
-- Create: `lib/std/contribution-host.js`
-- Modify: `lib/ui.js`（在 Settings 渲染贡献分区）
-- Modify: `lib/index.js`（句柄 `contribute`）
-- Test: `tests/std.test.mjs`
+**结论：按原设计不可实现，本 task 不执行。**
 
-**Interfaces:**
-- Consumes: `liveTui()`（Task 1）
-- Produces:
-  - `SETTINGS_SURFACE = { apiVersion: 'ui.dsh/v1alpha1', kind: 'SettingsSection' }`
-  - `createContributionHostProvider() -> UiContributionProvider`，成员 `participantId` / `support` / `register(owner, contribution, context) -> disposer`
-  - 句柄成员 `contribute(registration) -> disposer`
-
-- [ ] **Step 1: 写失败的测试**
-
-在 `tests/std.test.mjs` 的 import 区加入：
+原设计（spec §6.3）假定 facet 可以这样发布 UI 贡献宿主：
 
 ```js
-import { SETTINGS_SURFACE, createContributionHostProvider } from "../lib/std/contribution-host.js"
+context.protocols.implement(provider.support, provider)   // provider 是 UiContributionProvider
 ```
 
-在 `console.log("")` 之前加入：
+这条路径是错的。实测确认（`packages/adapter-dsh/src/index.ts`）：
+
+1. adapter 对传给 `implement()` 的值有强制校验（`:1774`）——必须有 `handle` 函数、`participantId` 必须匹配、`protocol` 必须等于 support。`UiContributionProvider` 的形状是 `{ participantId, support, register }`，**没有 `handle`**，也不是 `protocol` 而是 `support`，所以会在挂载时抛 `TypeError: staged protocol implementation must be a CapabilityImplementation`。
+2. `@dsh-std/ui` **没有** `*Implementation` 工厂（它的导出只有 `contributionHostSupport` / `bindContributionHost` / `bindContributionHosts` / `register` / `registerManifest`），所以不存在"用工厂包一层"的修法。
+3. UI 贡献宿主的真实注册入口是 **adapter 自己的方法** `DshStandardAdapter.registerUiContributionProvider(provider)`，它接受 `UiContributionProvider`、自行构造 declaration 并 publish（`:1157` 附近）。消费侧则由 `context.protocols.client({apiVersion:'ui.dsh/v1alpha1', kind:'ContributionHost'})` 取得，adapter 内部用 `bindContributionHosts(agreement, identity, providers)` 绑定，providers 来自 `this.uiProviders`（即上面那个方法填的注册表）。
+
+**为什么这意味着"移出范围"而不是"换个写法"：** `registerUiContributionProvider` 是 adapter 的实例方法，而 facet 只拿到 `ActivationContext`（`identity` / `plan` / `scope` / `protocols` / `extensions`），**拿不到 adapter 实例**。所以可移植 facet 在契约上就无法注册 UI 贡献宿主——这是宿主级钩子，不是 facet 激活面的一部分。
+
+**后续若要做，正确的落点不是 facet，而是 cordis 侧：** adapter 把自己注册为 cordis 服务 `dshStd`（`DSH_STD_NAMESPACE = 'dshStd'`，并 `declare module '@deepseek-ai/cordis' { interface Context { dshStd: DshStandardAdapter } }`）。因此 `lib/index.js` 可以在 `apply()` 里用既有的 `ctx.get(...)` 模式取到它：
 
 ```js
-// ---- contribution host ----
-{
-  eq("settings surface coordinate", SETTINGS_SURFACE,
-    { apiVersion: "ui.dsh/v1alpha1", kind: "SettingsSection" })
-
-  const provider = createContributionHostProvider()
-  eq("provider is on the ui coordinate", provider.support.apiVersion, "ui.dsh/v1alpha1")
-  eq("provider declares the ContributionHost kind", provider.support.kind, "ContributionHost")
-  // host-rendered only: local-module would require importing and running third
-  // party JS, and the TUI has no sandbox.
-  eq("only host-rendered content is accepted",
-    provider.support.spec.surfaces.map((s) => s.modes), [["host-rendered"]])
-  ok("the participant id is namespaced", /^[a-z]/.test(provider.participantId))
-
-  // No live TUI: register must still return a disposer, but must not throw.
-  const dispose = provider.register(
-    { component: "other.plugin", version: "1.0.0", facet: "host", instanceId: "i1", participantId: "other.plugin/host" },
-    { descriptor: { id: "other.plugin.one", surface: SETTINGS_SURFACE, content: { label: "Extra" } } },
-    { agreement: {}, signal: new AbortController().signal },
-  )
-  ok("register returns a disposer with no live TUI", typeof dispose === "function")
-  await dispose()
-}
-
-{
-  const contributed = []
-  const provider = createContributionHostProvider()
-  const release = registerLiveTui({
-    contribute(registration) {
-      contributed.push(registration)
-      return () => { contributed.push("disposed") }
-    },
-  })
-  const dispose = provider.register(
-    { component: "other.plugin", version: "1.0.0", facet: "host", instanceId: "i1", participantId: "other.plugin/host" },
-    { descriptor: { id: "other.plugin.one", surface: SETTINGS_SURFACE, placement: "settings", content: { label: "Extra" } } },
-    { agreement: {}, signal: new AbortController().signal },
-  )
-  eq("the contribution reached the live TUI", contributed.length, 1)
-  eq("the descriptor is passed through", contributed[0].descriptor.id, "other.plugin.one")
-  eq("the owner is passed through", contributed[0].owner.component, "other.plugin")
-  await dispose()
-  ok("disposing the lease reaches the TUI", contributed.includes("disposed"))
-
-  // A contribution aimed at a surface the TUI does not host must be rejected,
-  // not silently accepted.
-  let threw = false
-  try {
-    provider.register(
-      { component: "other.plugin", version: "1.0.0", facet: "host", instanceId: "i1", participantId: "other.plugin/host" },
-      { descriptor: { id: "other.plugin.two", surface: { apiVersion: "browser.ui.dsh/v1alpha1", kind: "SettingsSection" }, content: {} } },
-      { agreement: {}, signal: new AbortController().signal },
-    )
-  } catch { threw = true }
-  ok("a foreign surface is rejected", threw)
-
-  // local-module requires a module and host-rendered forbids one.
-  threw = false
-  try {
-    provider.register(
-      { component: "other.plugin", version: "1.0.0", facet: "host", instanceId: "i1", participantId: "other.plugin/host" },
-      { descriptor: { id: "other.plugin.three", surface: SETTINGS_SURFACE, content: {} }, localModule: {} },
-      { agreement: {}, signal: new AbortController().signal },
-    )
-  } catch { threw = true }
-  ok("a local module on a host-rendered surface is rejected", threw)
-
-  release()
+const dshStd = ctx.get('dshStd')
+if (dshStd?.registerUiContributionProvider) {
+  const release = dshStd.registerUiContributionProvider(provider)
+  ctx.effect(() => () => { void release() })
 }
 ```
 
-- [ ] **Step 2: 运行测试确认失败**
+这是 adapter 感知的 cordis 集成，不是可移植 facet 能力——诚实地说，它只在装了 adapter 的 profile 里生效，而这正是设计里 B 阶段"adapter-aware interop layer"的定位。但它需要 adapter 作为依赖才能测试，且贡献面的渲染（Settings 只读分区）是独立的一块工作。
 
-Run: `node tests/std.test.mjs`
-Expected: FAIL — `Cannot find module '.../lib/std/contribution-host.js'`
-
-- [ ] **Step 3: 实现**
-
-创建 `lib/std/contribution-host.js`：
-
-```js
-// ContributionHost for the TUI: the TUI owns the terminal, so it is the only
-// thing that can render a contribution. Other components register descriptors
-// here and the TUI paints them.
-//
-// Only `host-rendered` content is accepted. `local-module` would mean importing
-// and executing third-party JavaScript inside the TUI process, which has no
-// sandbox — and the standard itself says products without a shared page realm
-// (TUI, headless) need not implement the module mode.
-
-import { liveTui } from '../bridge.js'
-
-export const UI_API_VERSION = 'ui.dsh/v1alpha1'
-export const CONTRIBUTION_HOST_KIND = 'ContributionHost'
-
-// The one surface the TUI hosts today. The Settings pages already have stable
-// section rendering (lib/web-settings.js SETTINGS_MENU), so a contribution has
-// somewhere predictable to land.
-export const SETTINGS_SURFACE = Object.freeze({ apiVersion: UI_API_VERSION, kind: 'SettingsSection' })
-
-const PARTICIPANT_ID = 'io.github.rayafriandion.dsh-oc-tui/host'
-
-function sameSurface(left, right) {
-  return left?.apiVersion === right.apiVersion && left?.kind === right.kind
-}
-
-export function createContributionHostProvider() {
-  return {
-    participantId: PARTICIPANT_ID,
-    support: {
-      apiVersion: UI_API_VERSION,
-      kind: CONTRIBUTION_HOST_KIND,
-      spec: { surfaces: [{ ...SETTINGS_SURFACE, modes: ['host-rendered'] }] },
-    },
-
-    register(owner, contribution, context) {
-      const descriptor = contribution?.descriptor
-      if (!descriptor || typeof descriptor.id !== 'string') {
-        throw new TypeError('a ui contribution needs a descriptor with an id')
-      }
-      if (!sameSurface(descriptor.surface, SETTINGS_SURFACE)) {
-        throw new TypeError(
-          'unsupported ui surface ' + String(descriptor.surface?.apiVersion) + ' ' + String(descriptor.surface?.kind))
-      }
-      if (contribution.localModule !== undefined) {
-        throw new TypeError('local-module contributions are not supported; only host-rendered content')
-      }
-
-      // No live TUI: the registration is accepted and dropped, and the returned
-      // disposer is a no-op. Throwing here would turn "the TUI is not running"
-      // into a component activation failure.
-      const handle = liveTui()
-      if (!handle) return () => {}
-
-      return handle.contribute({ owner, descriptor, context })
-    },
-  }
-}
-```
-
-- [ ] **Step 4: 在句柄与 `App` 上实现渲染**
-
-在 `lib/ui.js:310` 的 `this.pendingSecret = null` 之后加入：
-
-```js
-    this.contributions = []        // [{ owner, descriptor }] from std components
-```
-
-在 `App` 上加两个方法（放在 `addNote` 附近）：
-
-```js
-  // Third-party UI contributions (ui.dsh/v1alpha1 ContributionHost). The TUI
-  // only hosts host-rendered content, so a contribution is data the TUI paints
-  // in its own style — never code it runs.
-  addContribution(owner, descriptor) {
-    this.contributions.push({ owner, descriptor })
-  }
-
-  removeContribution(descriptorId) {
-    const index = this.contributions.findIndex((c) => c.descriptor.id === descriptorId)
-    if (index >= 0) this.contributions.splice(index, 1)
-  }
-```
-
-在 Settings 项列表里追加贡献行。落点是 `lib/index.js` 的 `showSettings`——它是所有 Settings 标签页（main / model / update / sessions）汇合到 `app.openSettings` 的唯一位置，所以在这里追加能让贡献在切换标签页后依然可见。把 `showSettings` 换成：
-
-```js
-  function showSettings(loaded, selection = 0) {
-    sharedSettings = loaded.settings
-    // Third-party UI contributions (ui.dsh/v1alpha1 ContributionHost) render as
-    // read-only rows after the built-in ones. Read-only because writing back
-    // would need the storage protocol, which the TUI does not adopt yet.
-    // The row shape is the same one the "Settings file" row uses: no `kind`,
-    // `disabled: true` — which lib/index.js:2272 already treats as
-    // non-activatable.
-    const items = loaded.items.slice()
-    for (const { descriptor } of app.contributions) {
-      items.push({
-        label: String(descriptor.content?.label ?? descriptor.id),
-        value: String(descriptor.content?.value ?? ''),
-        disabled: true,
-      })
-    }
-    app.openSettings(items, {
-      title: loaded.title,
-      subtitle: loaded.subtitle,
-      menu: loaded.menu ?? [],
-      menuIndex: loaded.menuIndex ?? 0,
-    })
-    app.setSettingsSelection(selection)
-  }
-```
-
-在 `lib/index.js` 的句柄对象里、`commandCatalog` 之前加入：
-
-```js
-    contribute({ owner, descriptor }) {
-      app.addContribution(owner, descriptor)
-      paint()
-      let disposed = false
-      return () => {
-        if (disposed) return
-        disposed = true
-        app.removeContribution(descriptor.id)
-        paint()
-      }
-    },
-```
-
-- [ ] **Step 5: 在 facet 注册**
-
-在 `lib/facet.js` 的 `activateProtocols` 里、CommandRuntime 之后加入：
-
-```js
-  const { createContributionHostProvider } = await import('./std/contribution-host.js')
-  const provider = createContributionHostProvider()
-  disposers.push(context.protocols.implement(provider.support, provider))
-```
-
-- [ ] **Step 6: 运行全部测试**
-
-Run: `npm run check && npm test`
-Expected: 全绿
-
-- [ ] **Step 7: 提交**
-
-```bash
-git add lib/std/contribution-host.js lib/ui.js lib/index.js lib/facet.js tests/std.test.mjs
-git commit -m "feat(tui): host host-rendered ui contributions in the settings pages"
-```
+**因此 B3 单独作为后续任务，本次 A + B1a + B1b + B2 不含它。** 设计文档 §6.3 与 §10 需要同步修正（已在 spec 中标注）。
 
 ---
 
-## Task 13: 文档
+## Task 12: 文档
 
 **Files:**
 - Create: `docs/dsh-std-接入说明.md`
@@ -2598,7 +2504,7 @@ git commit -m "docs(tui): explain the dsh-std interop scope and the facet constr
 
 ---
 
-## Task 14: 真实 TUI 冒烟（不可省略）
+## Task 13: 真实 TUI 冒烟（不可省略）
 
 **Files:** 无代码改动。这是 Task 7 / 11 / 12 改动的验证关卡——`lib/index.js` 与 `lib/ui.js` 的改动不被单测覆盖，只有真实终端能验证。
 
@@ -2676,11 +2582,11 @@ git commit -m "docs(tui): record the manual smoke results for the std interop"
 | §6.1 B1a Presentation（question/approval/notification/copyText） | Task 4、6、7、8 |
 | §6.1 B1b Presentation（secret-input） | Task 11 |
 | §6.2 B2 CommandRuntime | Task 9、10 |
-| §6.3 B3 ContributionHost | Task 12 |
+| §6.3 B3 ContributionHost | **移出范围**（Task 12 记录了不可实现的原因与正确落点） |
 | §7 错误与边界（unavailable / private 复制） | Task 5、6、7、9 |
 | §8 测试计划 | 全部 task 的测试步骤 |
-| §9 文档更新 | Task 13 |
-| §10 已知限制 | Task 13 的接入说明 |
-| 人工验证（spec §8 未覆盖的真实终端路径） | Task 14 |
+| §9 文档更新 | Task 12 |
+| §10 已知限制 | Task 12 的接入说明 |
+| 人工验证（spec §8 未覆盖的真实终端路径） | Task 13 |
 
 **已知的、刻意留下的不一致：** 命令同时存在于 `dsh-plugin.json` 的静态贡献与 `lib/std/commands.js` 的 `TUI_OWNED_COMMANDS`（Task 9 的测试断言两者一致）。这是 spec §10 第 2 条记录的限制——静态贡献用于发现与预检，本地列表是执行路径。测试把两者钉在一起，所以任何一侧改动都会失败，不会静默漂移。

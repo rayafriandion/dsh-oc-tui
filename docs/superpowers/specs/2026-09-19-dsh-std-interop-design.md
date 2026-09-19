@@ -409,7 +409,27 @@ adapter 把 `Command` 扩展映射进 `DshCommandExtensionRegistry` 后，只有
 注册了匹配 placement 的 `DshCommandSurfaceProvider` 才会把它surface 回来，所以现阶段
 不会有"命令出现两次"的用户可见症状。
 
-### 6.3 B3 ContributionHost（TUI 作为宿主）
+### 6.3 B3 ContributionHost（TUI 作为宿主）—— 修正：facet 无法实现，已移出范围
+
+> **2026-09-19 修正。** 本节原方案不可实现，实施计划中 B3 已移出范围。原因：
+>
+> adapter 对传给 `context.protocols.implement()` 的值有强制校验
+> （`packages/adapter-dsh/src/index.ts:1774`）——必须有 `handle` 函数、`participantId`
+> 必须匹配、`protocol` 必须等于 support。而 `UiContributionProvider` 的形状是
+> `{ participantId, support, register }`，既没有 `handle`，字段名也是 `support` 而非
+> `protocol`，因此会在挂载时抛错，进而让 `mountProfileComponents` 回滚整个 profile。
+> `@dsh-std/ui` 也没有 `*Implementation` 工厂可供包一层。
+>
+> UI 贡献宿主的真实注册入口是 adapter 的实例方法
+> `DshStandardAdapter.registerUiContributionProvider(provider)`，而 facet 只拿到
+> `ActivationContext`，**拿不到 adapter 实例**。所以这是宿主级钩子，不是 facet 激活面
+> 的一部分。后续若要做，正确落点是 cordis 侧：adapter 注册为 cordis 服务 `dshStd`，
+> `lib/index.js` 可用既有的 `ctx.get('dshStd')` 模式调用它——但那需要 adapter 作为
+> 依赖才能测试，是独立的一块工作。
+>
+> 下面保留原始方案文本，仅作为当时的推理记录，**不要照此实现**。
+
+原方案（不可实现，勿照抄）：
 
 - 实现 `UiContributionProvider`：`{ participantId, support: contributionHostSupport(spec),
   register(owner, contribution, context) }`，`register` **必须返回 disposer**；
