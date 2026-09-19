@@ -29,6 +29,7 @@
 - **不实现、不声明** `OpenExternal`、`ExternalRedirect`、`local-module` 贡献模式、`session.dsh`、Storage、Tool、Model、Skill。
 - **测试沿用现有 harness**：`tests/smoke.test.mjs` 的 `eq(name, actual, expected)` / `ok(name, cond)`，`console.log("ok ...")` / `FAIL`，JSON.stringify 比较，失败时 `process.exit(1)`。不引入测试框架。
 - **每个新文件开头的用途注释、`// ---- name ----` 分隔线、扁平 `lib/` 布局**，与现有文件一致。
+- **`lib/index.js` 的 import 图必须不含可选 peer。** `lib/index.js` 是 `cordis.patch.yml` 里 `tui-app` 行的入口，**每个** profile 启动时都会加载它。任何它直接或间接静态 import 的模块，都不得在模块作用域 `import '@dsh-std/*'`——那些是 optional peer，npm 不安装，一旦缺席 `lib/index.js` 会在模块加载期就失败，TUI 完全起不来（facet 的 try/catch 救不了，因为 bundle 行先于 facet 加载）。需要协议包的文件（`lib/std/presentation.js`、`lib/std/commands.js`）只能被 `lib/facet.js` **动态** import；纯数据必须放在零依赖模块里。新增任何 `lib/index.js` 的 import 前，先确认其整条传递链上没有 `@dsh-std/*`。
 - **提交信息用 `feat(tui):` / `test(tui):` / `docs(tui):` / `chore(pkg):` 前缀**，与现有 git log 一致。
 
 ## 文件结构
@@ -1778,10 +1779,10 @@ async function activateProtocols(context) {
 Task 3 把 `lib/bridge.js` 与 `lib/facet.js` 加进了 `scripts.check`，但那时 `lib/std/` 还不存在。现在补上——`node --check` 是本仓库唯一的语法关卡，漏掉的文件只有被测试 import 时才会被间接解析：
 
 ```json
-    "check": "node --check lib/index.js && node --check lib/ui.js && node --check lib/term.js && node --check lib/metrics.js && node --check lib/interrupt.js && node --check lib/web-settings.js && node --check lib/updates.js && node --check lib/rewind.js && node --check lib/bridge.js && node --check lib/facet.js && node --check lib/std/adapt.js && node --check lib/std/presentation.js && node --check bin/dsh-oc-tui.js"
+    "check": "node --check lib/index.js && node --check lib/ui.js && node --check lib/term.js && node --check lib/metrics.js && node --check lib/interrupt.js && node --check lib/web-settings.js && node --check lib/updates.js && node --check lib/rewind.js && node --check lib/bridge.js && node --check lib/facet.js && node --check lib/std/adapt.js && node --check lib/std/presentation.js && node --check lib/std/command-list.js && node --check bin/dsh-oc-tui.js"
 ```
 
-（`lib/std/commands.js` 由 Task 9 创建，Task 9 负责把它也加进去。）
+（`lib/std/commands.js` 与 `lib/std/command-list.js` 由 Task 9 创建，Task 9 负责把它们也加进去。）
 
 - [ ] **Step 5: 运行测试确认通过**
 
@@ -1800,15 +1801,18 @@ git commit -m "feat(tui): register the presentation implementations on facet act
 ## Task 9: `lib/std/commands.js` — CommandRuntime
 
 **Files:**
+- Create: `lib/std/command-list.js`（**零 import**）
 - Create: `lib/std/commands.js`
-- Modify: `package.json`（`scripts.check` 加上 `lib/std/commands.js`）
+- Modify: `package.json`（`scripts.check` 加上两个新文件）
 - Test: `tests/std.test.mjs`
 
 **Interfaces:**
 - Consumes: `liveTui()`（Task 1）
-- Produces:
+- Produces（`lib/std/command-list.js`，**零 import**）：
   - `COMMAND_PLACEMENT = { apiVersion: 'tui.dsh/v1alpha1', kind: 'CommandLine' }`
   - `TUI_OWNED_COMMANDS = ['settings','help','stats','new','resume','clear','cancel','rewind','quit']`
+  - `COMMAND_DESCRIPTIONS`（九个命令的人类可读描述，与清单里的 `title` 一致）
+- Produces（`lib/std/commands.js`，转出上面三项并加协议部分）：
   - `createCommandRuntimeHandler() -> { catalog(input, context), execute(input, context) }` — 裸 handler，便于直接测试
   - `createCommandRuntimeImplementation(participantId) -> CapabilityImplementation` — 可直接交给 `context.protocols.implement(impl.protocol, impl)`
   - 依赖活体句柄的成员：`handle.commandCatalog(input)`、`handle.executeCommand(line, input)`
@@ -1920,7 +1924,48 @@ import { COMMAND_PLACEMENT, TUI_OWNED_COMMANDS, createCommandRuntimeHandler, cre
 Run: `node tests/std.test.mjs`
 Expected: FAIL — `Cannot find module '.../lib/std/commands.js'`
 
-- [ ] **Step 3: 实现**
+- [ ] **Step 3: 实现 `lib/std/command-list.js`（零 import）**
+
+**为什么单独一个文件。** `lib/index.js` 需要 `TUI_OWNED_COMMANDS` 与描述表，而它是 bundle 行的入口——每个 profile 启动都会加载。若它 import `lib/std/commands.js`，就会连带静态加载 `@dsh-std/command`；那是 optional peer，npm 不安装，缺席时 `lib/index.js` 在模块加载期即失败，TUI 完全起不来，且 facet 的 try/catch 救不了（bundle 行先加载）。所以纯数据必须住在一个零依赖模块里。
+
+创建 `lib/std/command-list.js`：
+
+```js
+// The TUI's own command line: placement coordinate, the commands the TUI always
+// owns, and their human-readable descriptions.
+//
+// ZERO imports, deliberately. lib/index.js (the cordis bundle entry, loaded on
+// every profile start) needs this data, and anything it imports statically must
+// not reach an optional peer — @dsh-std/* are optional peers npm does not
+// install, so a module-scope import of one would make lib/index.js fail at load
+// time and the TUI would not start at all.
+
+// Product-owned coordinates use the tui.dsh/* namespace, per the ecosystem
+// governance rules.
+export const COMMAND_PLACEMENT = Object.freeze({ apiVersion: 'tui.dsh/v1alpha1', kind: 'CommandLine' })
+
+// Commands the TUI always owns. /model and /provider are deliberately absent:
+// runCommand asks ctx.commands.find() first, so the harness owns them whenever
+// it registers them and the TUI only supplies the fallback.
+export const TUI_OWNED_COMMANDS = Object.freeze([
+  'settings', 'help', 'stats', 'new', 'resume', 'clear', 'cancel', 'rewind', 'quit',
+])
+
+// Mirrors the `title` of each contributed command in dsh-plugin.json.
+export const COMMAND_DESCRIPTIONS = Object.freeze({
+  settings: 'Open the TUI settings pages',
+  help: 'Show the TUI key and command reference',
+  stats: 'Show session token and cache statistics',
+  new: 'Start a new session',
+  resume: 'Resume a persisted session',
+  clear: 'Clear the transcript',
+  cancel: 'Cancel the running turn',
+  rewind: 'Rewind the session to an earlier point',
+  quit: 'Leave the TUI',
+})
+```
+
+- [ ] **Step 4: 实现 `lib/std/commands.js`**
 
 创建 `lib/std/commands.js`：
 
@@ -1995,15 +2040,17 @@ export function createCommandRuntimeImplementation(participantId) {
 }
 ```
 
-- [ ] **Step 4: 运行测试确认通过**
+- [ ] **Step 5: 运行测试确认通过**
 
 Run: `node tests/std.test.mjs`
 Expected: 全部 `ok`
 
-- [ ] **Step 5: 提交**
+- [ ] **Step 6: 把两个新文件加进 `scripts.check`，并提交**
+
+`package.json` 的 `check` 里在 `node --check lib/std/presentation.js` 之后插入 `&& node --check lib/std/command-list.js && node --check lib/std/commands.js`，然后：
 
 ```bash
-git add lib/std/commands.js package.json tests/std.test.mjs
+git add lib/std/command-list.js lib/std/commands.js package.json tests/std.test.mjs
 git commit -m "feat(tui): provide a CommandRuntime scoped to the TUI command line"
 ```
 
@@ -2102,10 +2149,10 @@ Task 9 的审查发现两条断言没有测到它们名字所说的东西，趁�
 
 - [ ] **Step 4: 在句柄上实现 catalog 与 execute**
 
-在 `lib/index.js` 的 import 区加入：
+在 `lib/index.js` 的 import 区加入——**必须来自 `command-list.js`，不能来自 `commands.js`**。后者在模块作用域 import 了可选 peer `@dsh-std/command`，而 `lib/index.js` 是每个 profile 都会加载的 bundle 入口，peer 缺席时会在模块加载期直接失败：
 
 ```js
-import { TUI_OWNED_COMMANDS } from './std/commands.js'
+import { TUI_OWNED_COMMANDS, COMMAND_DESCRIPTIONS } from './std/command-list.js'
 ```
 
 在 `registerLiveTui({ ... })` 的对象里、`copyText` 之后加入两个成员：
@@ -2136,18 +2183,6 @@ import { TUI_OWNED_COMMANDS } from './std/commands.js'
 在 `registerLiveTui` 之前加入命令描述表与一个返回结果而非只写 transcript 的执行包装：
 
 ```js
-  const COMMAND_DESCRIPTIONS = {
-    settings: 'Open the TUI settings pages',
-    help: 'Show the TUI key and command reference',
-    stats: 'Show session token and cache statistics',
-    new: 'Start a new session',
-    resume: 'Resume a persisted session',
-    clear: 'Clear the transcript',
-    cancel: 'Cancel the running turn',
-    rewind: 'Rewind the session to an earlier point',
-    quit: 'Leave the TUI',
-  }
-
   // runCommand reports through the transcript/toast and returns nothing; the
   // std runtime needs the outcome. This wrapper captures the feedback that
   // runCommand would have shown and returns it as the standard's result shape,
