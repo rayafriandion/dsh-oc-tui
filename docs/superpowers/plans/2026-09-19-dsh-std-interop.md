@@ -1538,8 +1538,6 @@ git commit -m "feat(tui): publish Presentation support through the protocol fact
 
 只改最后一行。**这一步不能省**：漏掉它，`askQuestions` 会在每次 `user-questions/request` 时同步抛 `ReferenceError`，问题模态完全不工作——比改动前更糟。
 
-- [ ] **Step 4: 注册活体句柄**
-
 - [ ] **Step 5: 注册活体句柄**
 
 在 `lib/index.js` 顶部的 import 区加入：
