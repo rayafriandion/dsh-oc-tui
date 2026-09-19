@@ -387,7 +387,7 @@ git commit -m "feat(tui): declare the dsh-std component manifest"
 
 **Files:**
 - Create: `lib/facet.js`
-- Modify: `package.json`（`files`、`engines`、`peerDependencies`、`peerDependenciesMeta`、`scripts.check`、`scripts.test`）
+- Modify: `package.json`（`files`、`engines`、`peerDependencies`、`peerDependenciesMeta`、`devDependencies`、`scripts.check`、`scripts.test`）
 - Test: `tests/std.test.mjs`
 
 **Interfaces:**
@@ -530,7 +530,20 @@ async function activateProtocols() {
     "@dsh-std/ui": { "optional": true },
 ```
 
-4. `scripts` 接入新测试与新文件检查：
+4. `devDependencies` 加入**同样这四个协议包**，同样精确版本：
+
+```json
+    "@dsh-std/command": "0.1.1-rc.1",
+    "@dsh-std/presentation": "0.1.1-rc.1",
+    "@dsh-std/sdk": "0.1.1-rc.2",
+    "@dsh-std/ui": "0.1.1-rc.1",
+```
+
+**为什么 peer 和 dev 都要有。** `peerDependenciesMeta` 里标了 `optional: true` 的 peer，npm **不会**安装——这正是我们要的运行时行为（facet 必须在它们缺席时降级为 `degraded`，而不是让 adapter 的 `mountProfileComponents` 整体回滚）。但 Task 8 / 10 / 12 的测试会真的调用 `facet.activate(context)` 并断言注册了哪些协议，那就必须能真正 `import('@dsh-std/sdk')` 等模块。只声明 optional peer 而不声明 devDependency，那些测试必然失败。两边用同一批精确版本，避免测试对着与运行时不同的版本通过。
+
+（Task 3 自己的测试不需要它们：它只调 `snapshot()`，不调 `activate()`，而 `lib/facet.js` 顶层没有静态 import。）
+
+5. `scripts` 接入新测试与新文件检查：
 ```json
     "test": "node tests/smoke.test.mjs && node tests/render.test.mjs && node tests/rewind.test.mjs && node tests/std.test.mjs",
     "check": "node --check lib/index.js && node --check lib/ui.js && node --check lib/term.js && node --check lib/metrics.js && node --check lib/interrupt.js && node --check lib/web-settings.js && node --check lib/updates.js && node --check lib/rewind.js && node --check lib/bridge.js && node --check lib/facet.js && node --check bin/dsh-oc-tui.js"
