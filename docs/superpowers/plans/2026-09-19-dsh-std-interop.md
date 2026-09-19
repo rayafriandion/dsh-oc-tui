@@ -991,27 +991,31 @@ import { Terminal } from "../lib/term.js"
   term.output = { isTTY: true }
   const fakeSpawn = (cmd, args) => { spawned.push([cmd, args]); return { on() {} } }
 
+  // The spoof MUST be restored even if an assertion throws: every later section
+  // in this file would otherwise run under a faked platform. (The harness's
+  // eq/ok do not throw today, but a future edit that does would cascade.)
   const originalPlatform = Object.getOwnPropertyDescriptor(process, "platform")
   Object.defineProperty(process, "platform", { value: "win32", configurable: true })
+  try {
+    writes.length = 0
+    term.copyToClipboard("hello", { spawn: fakeSpawn })
+    ok("copy writes OSC 52", writes.join("").includes("]52;c;"))
+    ok("OSC 52 payload carries base64",
+      writes.join("").includes(Buffer.from("hello", "utf8").toString("base64")))
+    eq("the default path does spawn on win32", spawned.length, 1)
+    // The fallback passes the text's base64 as a powershell.exe argument, where
+    // any process of the same user can read it back.
+    ok("the fallback receives the text as base64 in argv",
+      spawned[0][1].join(" ").includes(Buffer.from("hello", "utf8").toString("base64")))
 
-  writes.length = 0
-  term.copyToClipboard("hello", { spawn: fakeSpawn })
-  ok("copy writes OSC 52", writes.join("").includes("]52;c;"))
-  ok("OSC 52 payload carries base64",
-    writes.join("").includes(Buffer.from("hello", "utf8").toString("base64")))
-  eq("the default path does spawn on win32", spawned.length, 1)
-  // The fallback passes the text's base64 as a powershell.exe argument
-  // (lib/term.js:416), readable by any process of the same user.
-  ok("the fallback receives the text as base64 in argv",
-    spawned[0][1].join(" ").includes(Buffer.from("hello", "utf8").toString("base64")))
-
-  spawned.length = 0
-  writes.length = 0
-  term.copyToClipboard("secret", { osc52Only: true, spawn: fakeSpawn })
-  eq("osc52Only never spawns the PowerShell fallback", spawned.length, 0)
-  ok("osc52Only still writes OSC 52", writes.join("").includes("]52;c;"))
-
-  Object.defineProperty(process, "platform", originalPlatform)
+    spawned.length = 0
+    writes.length = 0
+    term.copyToClipboard("secret", { osc52Only: true, spawn: fakeSpawn })
+    eq("osc52Only never spawns the PowerShell fallback", spawned.length, 0)
+    ok("osc52Only still writes OSC 52", writes.join("").includes("]52;c;"))
+  } finally {
+    Object.defineProperty(process, "platform", originalPlatform)
+  }
 }
 ```
 
