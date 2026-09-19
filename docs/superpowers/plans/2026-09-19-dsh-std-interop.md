@@ -1325,19 +1325,24 @@ async function withLiveTui(fn) {
 // factories' dispatch and validation layer.
 export function createPresentationHandlers() {
   return {
+    // The protocol's second argument is a CapabilityHandlerContext carrying the
+    // AbortSignal for this invocation. It MUST be forwarded: the request itself
+    // has no signal field (PresentationRequestContext is requestId, invocationId,
+    // origin, deadline), so without this a consumer that goes away leaves the
+    // TUI's modal pending forever.
     userInteraction: {
-      async interact(request) {
-        return withLiveTui((handle) => handle.interact(request))
+      async interact(request, context) {
+        return withLiveTui((handle) => handle.interact(request, context))
       },
     },
     notification: {
-      async notify(request) {
-        return withLiveTui((handle) => handle.notify(request))
+      async notify(request, context) {
+        return withLiveTui((handle) => handle.notify(request, context))
       },
     },
     copyText: {
-      async copyText(request) {
-        return withLiveTui((handle) => handle.copyText(request))
+      async copyText(request, context) {
+        return withLiveTui((handle) => handle.copyText(request, context))
       },
     },
   }
@@ -1498,13 +1503,44 @@ git commit -m "feat(tui): publish Presentation support through the protocol fact
     })
   }
 
-  function askQuestions(req) {
+  // `next` is threaded in as a PARAMETER, never referenced as a free variable.
+  // It is bound only as the parameter of the ctx.on arrow below, so a body that
+  // merely mentions it throws ReferenceError on every request — strictly worse
+  // than the original, where the free `next` sat inside `defer` and was
+  // evaluated lazily, so only Esc broke.
+  function askQuestions(req, next) {
     const questions = (Array.isArray(req.questions) ? req.questions : []).map(normalizeQuestion)
     return waitForQuestions(questions, { signal: req.signal, onDefer: next })
   }
 ```
 
-- [ ] **Step 3: 注册活体句柄**
+- [ ] **Step 3: 改 `ctx.on('user-questions/request', ...)` 的调用点**
+
+上一步把 `next` 变成了形参，所以调用点必须把它传进去。把：
+
+```js
+  ctx.on('user-questions/request', (req, next) => {
+    const agent = req.agent
+    if (!currentAgent || (agent && agent.id !== currentAgent.id)) return next()
+    return askQuestions(req)
+  })
+```
+
+改成：
+
+```js
+  ctx.on('user-questions/request', (req, next) => {
+    const agent = req.agent
+    if (!currentAgent || (agent && agent.id !== currentAgent.id)) return next()
+    return askQuestions(req, next)
+  })
+```
+
+只改最后一行。**这一步不能省**：漏掉它，`askQuestions` 会在每次 `user-questions/request` 时同步抛 `ReferenceError`，问题模态完全不工作——比改动前更糟。
+
+- [ ] **Step 4: 注册活体句柄**
+
+- [ ] **Step 5: 注册活体句柄**
 
 在 `lib/index.js` 顶部的 import 区加入：
 
@@ -1522,12 +1558,15 @@ import { notificationLevel, approvalOutcome, toTuiQuestions, fromTuiAnswers } fr
   // own, which is what keeps the adapter from activating the TUI twice.
 
   const releaseLiveTui = registerLiveTui({
-    async interact(request) {
+    async interact(request, context) {
+      // The abort signal comes from the protocol's handler context, not from the
+      // request: PresentationRequestContext has no signal field.
+      const signal = context?.signal
       if (request.kind === 'approval') {
         const outcome = await awaitApproval({
           toolName: request.action,
           reason: request.summary,
-          signal: request.signal,
+          signal,
         })
         return approvalOutcome(outcome)
       }
@@ -1535,7 +1574,7 @@ import { notificationLevel, approvalOutcome, toTuiQuestions, fromTuiAnswers } fr
         const { questions, decoders } = toTuiQuestions(request.fields)
         try {
           const answer = await waitForQuestions(questions, {
-            signal: request.signal,
+            signal,
             onDefer: () => null,
           })
           if (answer === null) return { status: 'cancelled' }
@@ -1582,7 +1621,7 @@ import { notificationLevel, approvalOutcome, toTuiQuestions, fromTuiAnswers } fr
       releaseLiveTui()
 ```
 
-- [ ] **Step 4: 写契约测试**
+- [ ] **Step 6: 写契约测试**
 
 在 `tests/std.test.mjs` 的 `console.log("")` 之前加入。这个测试不启动 TUI，只断言 `lib/index.js` 暴露的适配行为与句柄契约一致——用 `lib/std/adapt.js` 的纯函数 + 一个模拟句柄：
 
@@ -1594,8 +1633,8 @@ import { notificationLevel, approvalOutcome, toTuiQuestions, fromTuiAnswers } fr
 {
   const seen = []
   const handle = {
-    async interact(request) {
-      seen.push(request)
+    async interact(request, context) {
+      seen.push(request, context?.signal)
       if (request.kind === "approval") {
         const { approvalOutcome } = await import("../lib/std/adapt.js")
         return approvalOutcome("rejected")
@@ -1609,30 +1648,37 @@ import { notificationLevel, approvalOutcome, toTuiQuestions, fromTuiAnswers } fr
   const ui = createPresentationHandlers().userInteraction
   const release = registerLiveTui(handle)
 
-  const res = await ui.interact({ kind: "approval", action: "shell", summary: "run rm", risk: "high" })
+  const signal = new AbortController().signal
+  const res = await ui.interact(
+    { kind: "approval", action: "shell", summary: "run rm", risk: "high" }, { signal })
   eq("the handle receives the std request unchanged",
     seen[0], { kind: "approval", action: "shell", summary: "run rm", risk: "high" })
+  eq("the handle receives the protocol context, so it can honour aborts",
+    seen[1], signal)
   eq("a denial surfaces as a submitted denial", res,
     { status: "submitted", value: { decision: "denied" } })
 
-  eq("an unsupported request shape is cancelled, not approved",
+  // This block drives the bare handler with a stub handle, so it pins the
+  // pass-through, not lib/index.js. The stub answers anything that is not an
+  // approval with `cancelled`, and that value must come back unchanged.
+  eq("a non-approval result is passed through unchanged",
     await ui.interact({ kind: "question", fields: [] }), { status: "cancelled" })
 
   release()
 }
 ```
 
-- [ ] **Step 5: 运行全部测试**
+- [ ] **Step 7: 运行全部测试**
 
 Run: `npm run check && npm test`
 Expected: 四个测试文件全绿；`check` 静默通过
 
-- [ ] **Step 6: 手动验证既有路径没坏**
+- [ ] **Step 8: 手动验证既有路径没坏**
 
 Run: `node tests/smoke.test.mjs && node tests/render.test.mjs && node tests/rewind.test.mjs`
 Expected: 全绿。这三个文件覆盖了 `App` 的渲染与 rewind 的纯函数；审批/问答的抽取改的是 `lib/index.js`，它不被单测覆盖，所以**必须**在下一步用真实 TUI 冒烟。
 
-- [ ] **Step 7: 提交**
+- [ ] **Step 9: 提交**
 
 ```bash
 git add lib/index.js tests/std.test.mjs
@@ -2389,7 +2435,7 @@ Expected: FAIL — `this._paintSecret is not a function`（Step 3 只加了状�
           const value = await waitForSecret({
             label: request.label,
             description: request.description,
-            signal: request.signal,
+            signal,
           })
           if (value === null) return { status: 'cancelled' }
           return { status: 'submitted', value: { secret: value } }
