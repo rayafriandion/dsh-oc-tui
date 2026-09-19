@@ -8,6 +8,7 @@ import { registerLiveTui, liveTui } from "../lib/bridge.js"
 import { parseManifest, projectManifest } from "@dsh-std/manifest"
 import { notificationLevel, approvalOutcome, toTuiQuestions, fromTuiAnswers } from "../lib/std/adapt.js"
 import { createPresentationHandlers, createPresentationImplementations, presentationOperations } from "../lib/std/presentation.js"
+import { COMMAND_PLACEMENT, TUI_OWNED_COMMANDS, createCommandRuntimeHandler, createCommandRuntimeImplementation } from "../lib/std/commands.js"
 import { Terminal } from "../lib/term.js"
 
 const here = dirname(fileURLToPath(import.meta.url))
@@ -552,7 +553,7 @@ const PARTICIPANT = "test/dsh-oc-tui"
     extensions: { publish: () => () => {} },
   }
   await mod.default.activate(context)
-  // @dsh-std/sdk is a devDependency here, so activation proceeds.
+  // @dsh-std/presentation is a devDependency here, so the guarded import succeeds.
   const kinds = registered.map((r) => r.support.kind).sort()
   eq("activation publishes the three presentation kinds", kinds, ["CopyText", "Notification", "UserInteraction"])
   ok("nothing else is published yet", registered.length === 3)
@@ -566,6 +567,94 @@ const PARTICIPANT = "test/dsh-oc-tui"
     ["test/facet-participant", "test/facet-participant", "test/facet-participant"])
   eq("each implementation is staged with its own protocol",
     registered.map((r) => r.implementation.protocol === r.support), [true, true, true])
+}
+
+// ---- command runtime ----
+{
+  eq("placement coordinate is the TUI command line", COMMAND_PLACEMENT,
+    { apiVersion: "tui.dsh/v1alpha1", kind: "CommandLine" })
+  // Must match the nine commands contributed in dsh-plugin.json.
+  eq("the owned list matches the manifest", [...TUI_OWNED_COMMANDS].sort(),
+    ["cancel", "clear", "help", "new", "quit", "resume", "rewind", "settings", "stats"])
+  ok("model and provider are not owned", !TUI_OWNED_COMMANDS.includes("model") && !TUI_OWNED_COMMANDS.includes("provider"))
+
+  const runtime = createCommandRuntimeHandler()
+  eq("catalog with no live TUI returns an empty catalog",
+    await runtime.catalog({ contextId: "s1" }),
+    { apiVersion: "commands.dsh/v1alpha1", commands: [] })
+  eq("execute with no live TUI returns undefined",
+    await runtime.execute({ contextId: "s1", line: "/help" }), undefined)
+}
+
+{
+  const calls = []
+  const runtime = createCommandRuntimeHandler()
+  const release = registerLiveTui({
+    async commandCatalog(input) {
+      calls.push(["catalog", input])
+      return [
+        { name: "help", description: "Show help" },
+        { name: "stats", description: "Show stats" },
+      ]
+    },
+    async executeCommand(line, input) {
+      calls.push(["execute", line, input])
+      return { kind: "success", text: "ok" }
+    },
+  })
+
+  // A request for the TUI's own command line must be answered.
+  const catalog = await runtime.catalog({ contextId: "s1", placement: COMMAND_PLACEMENT })
+  eq("catalog is published under the std coordinate", catalog.apiVersion, "commands.dsh/v1alpha1")
+  eq("catalog carries the live commands", catalog.commands.map((c) => c.name), ["help", "stats"])
+
+  // A request for a different surface must NOT be answered: the TUI owns only
+  // its own command line, and returning commands here would make them appear on
+  // surfaces that cannot run them.
+  eq("a foreign placement gets an empty catalog",
+    (await runtime.catalog({ contextId: "s1", placement: { apiVersion: "web.dsh/v1alpha1", kind: "CommandLine" } })).commands,
+    [])
+  eq("an unspecified placement gets an empty catalog",
+    (await runtime.catalog({ contextId: "s1" })).commands, [])
+
+  eq("execute forwards the raw line",
+    await runtime.execute({ contextId: "s1", line: "/help now", placement: COMMAND_PLACEMENT }),
+    { apiVersion: "commands.dsh/v1alpha1", commandId: "help",
+      result: { kind: "success", text: "ok" } })
+  eq("execute on a foreign placement is not run",
+    await runtime.execute({ contextId: "s1", line: "/help", placement: { apiVersion: "web.dsh/v1alpha1", kind: "CommandLine" } }),
+    undefined)
+  eq("the live handle saw the raw line", calls.at(-1)[1], "/help now")
+
+  release()
+}
+
+// The factory result is what the adapter validates, so its shape is pinned:
+// a missing `handle`, a mismatched participantId, or a protocol differing from
+// the staged support each throws during mount and rolls back the whole profile.
+{
+  const impl = createCommandRuntimeImplementation("test/dsh-oc-tui")
+  eq("the implementation carries the participant id", impl.participantId, "test/dsh-oc-tui")
+  ok("the implementation has a handle function", typeof impl.handle === "function")
+  eq("the implementation is on the commands coordinate",
+    impl.protocol.apiVersion, "commands.dsh/v1alpha1")
+  eq("the implementation declares the CommandRuntime kind", impl.protocol.kind, "CommandRuntime")
+
+  // And the dispatch path works end to end through the factory.
+  const release = registerLiveTui({
+    async commandCatalog() { return [{ name: "help", description: "Show help" }] },
+    async executeCommand() { return { kind: "success", text: "ok" } },
+  })
+  eq("catalog dispatches through the factory",
+    (await impl.handle("catalog", { contextId: "s1", placement: COMMAND_PLACEMENT }, {})).commands.map((c) => c.name),
+    ["help"])
+  eq("execute dispatches through the factory",
+    (await impl.handle("execute", { contextId: "s1", line: "/help", placement: COMMAND_PLACEMENT }, {})).commandId,
+    "help")
+  let threw = false
+  try { await impl.handle("nonsense", {}, {}) } catch { threw = true }
+  ok("an undeclared operation is rejected", threw)
+  release()
 }
 
 console.log("")
