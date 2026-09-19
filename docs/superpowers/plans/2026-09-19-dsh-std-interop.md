@@ -371,10 +371,15 @@ Expected: 全部 `ok`，最后一行 `all std tests passed`
 
 - [ ] **Step 6: 提交**
 
+**不要提交 `package-lock.json`。** 本仓库从来没有 lockfile：它不存在、未被 git 跟踪、也没有被 `.gitignore` 忽略——它的缺席是这个仓库一贯的选择，不是为了本 task 才改变的。`npm install` 会在本地生成一个，装完后删掉它，让工作区保持干净：
+
 ```bash
-git add dsh-plugin.json package.json package-lock.json tests/std.test.mjs
+rm -f package-lock.json
+git add dsh-plugin.json package.json tests/std.test.mjs
 git commit -m "feat(tui): declare the dsh-std component manifest"
 ```
+
+（`files` 白名单意味着 lockfile 也不会进 npm 包；这里要避免的是给贡献者引入一套他们没选的依赖管理方式。）
 
 ---
 
