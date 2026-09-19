@@ -161,10 +161,15 @@ eq("submitted approval", approvalOutcome("allowed-once"),
   { status: "submitted", value: { decision: "approved" } })
 eq("submitted denial", approvalOutcome("rejected"),
   { status: "submitted", value: { decision: "denied" } })
-// A cancel must never be readable as consent.
+// A cancel must never be readable as consent. This is the highest-consequence
+// property in the module, so every non-decision shape is pinned, not just the
+// named one.
 eq("cancelled is not an approval", approvalOutcome("cancelled"), { status: "cancelled" })
 eq("an unknown outcome is not an approval either",
   approvalOutcome("something-else"), { status: "cancelled" })
+eq("undefined is not an approval", approvalOutcome(undefined), { status: "cancelled" })
+eq("null is not an approval", approvalOutcome(null), { status: "cancelled" })
+eq("a truthy non-decision is not an approval", approvalOutcome(true), { status: "cancelled" })
 
 // ---- adapt: select field ----
 {
@@ -222,6 +227,69 @@ eq("an unknown outcome is not an approval either",
   eq("the second duplicate decodes to its own id",
     fromTuiAnswers(decoders, { answers: [{ id: "pick", selected: ["Same (2)"] }] }),
     { answers: { pick: "two" } })
+}
+
+// A literal label may already equal a generated suffix. Counting occurrences of
+// the base label is not enough: it would emit "Same (2)" twice and let the last
+// option overwrite the second one's id, so picking the second option would
+// silently return the third option's id.
+{
+  const { questions, decoders } = toTuiQuestions([
+    { id: "pick", label: "Pick", kind: "select",
+      options: [{ id: "one", label: "Same" }, { id: "two", label: "Same" }, { id: "three", label: "Same (2)" }] },
+  ])
+  eq("a suffix-shaped literal label does not collide",
+    questions[0].options.map((o) => o.label), ["Same", "Same (2)", "Same (3)"])
+  eq("the second option keeps its own id",
+    fromTuiAnswers(decoders, { answers: [{ id: "pick", selected: ["Same (2)"] }] }),
+    { answers: { pick: "two" } })
+  eq("the third option keeps its own id",
+    fromTuiAnswers(decoders, { answers: [{ id: "pick", selected: ["Same (3)"] }] }),
+    { answers: { pick: "three" } })
+}
+
+// Disambiguation is per field: a collision in one field must not shift the
+// labels of another.
+{
+  const { questions } = toTuiQuestions([
+    { id: "a", label: "A", kind: "select", options: [{ id: "a1", label: "Dup" }, { id: "a2", label: "Dup" }] },
+    { id: "b", label: "B", kind: "select", options: [{ id: "b1", label: "Dup" }] },
+  ])
+  eq("the first field disambiguates", questions[0].options.map((o) => o.label), ["Dup", "Dup (2)"])
+  eq("the second field is unaffected", questions[1].options.map((o) => o.label), ["Dup"])
+}
+
+// ---- adapt: ids and labels come from another component, so they must not be
+// able to reach Object.prototype ----
+{
+  const { decoders } = toTuiQuestions([
+    { id: "pick", label: "Pick", kind: "select",
+      options: [{ id: "real", label: "__proto__" }] },
+  ])
+  eq("a __proto__ label round-trips to its id",
+    fromTuiAnswers(decoders, { answers: [{ id: "pick", selected: ["__proto__"] }] }),
+    { answers: { pick: "real" } })
+
+  const plain = toTuiQuestions([{ id: "x", label: "X", kind: "text" }])
+  // An answer for a field we never issued must be ignored, not crash and not
+  // fabricate: `decoders.toString` must be undefined, not Object.prototype's.
+  eq("an inherited-looking field id is ignored",
+    fromTuiAnswers(plain.decoders, { answers: [{ id: "toString", selected: ["A"], custom: "x" }] }),
+    { answers: {} })
+  eq("an inherited-looking id with a selection does not throw",
+    fromTuiAnswers(plain.decoders, { answers: [{ id: "valueOf", selected: ["A"] }] }),
+    { answers: {} })
+}
+
+// ---- adapt: malformed answers must not throw ----
+{
+  const { decoders } = toTuiQuestions([{ id: "a", label: "A", kind: "text" }])
+  eq("a non-array answers value yields no answers",
+    fromTuiAnswers(decoders, { answers: {} }), { answers: {} })
+  eq("a missing answers value yields no answers",
+    fromTuiAnswers(decoders, {}), { answers: {} })
+  eq("a null answer yields no answers",
+    fromTuiAnswers(decoders, null), { answers: {} })
 }
 
 // ---- adapt: confirm ----
