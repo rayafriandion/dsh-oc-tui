@@ -2696,6 +2696,46 @@ git commit -m "feat(tui): add the standalone secret prompt and claim secret-inpu
 
 ---
 
+## 最终审查的 Important 项（收尾工作，2026-09-20）
+
+三项，按重要性排序。它们不在原来的 13 个 task 里——是最终全分支审查发现的。
+
+### I3（最优先，因为它在已发布的清单里）：`requires.contracts` 无人兑现且非 optional
+
+`dsh-plugin.json` 声明了 `commands.dsh/v1alpha1 Command` 作为**非 optional** 的 requirement，但 `lib/` 里**没有任何代码**调用 `protocols.client(...)`——TUI 读命令走的是 cordis 的 `ctx.commands` 服务。设计 §6.2 自己也说，std 的 `Command` 扩展只有在产品 UI 注册了 `DshCommandSurfaceProvider` 时才会被 surface 回来，而本插件没有注册。
+
+而 lifecycle 的 `activateOne` 对任何 error 级协商问题都抛 `facet … requirements are unavailable`——所以"非 optional 且无提供方"是**硬激活失败**，不是警告。本分支把 Presentation 从 `requires` 里移走的理由正是"无人兑现的声明就是虚假声明"，这里是它的镜像。
+
+**修法**：给那一条加 `"optional": true`（诚实——TUI 没有任何 Command 提供方也能正常工作），并修正文档/README 里"它会读取别人贡献的命令"这类没有代码支撑的说法。
+
+### I2（安全关键，且零断言）：`sensitivity → osc52Only` 的映射
+
+`lib/index.js` 里 `osc52Only: request.sensitivity === 'private'` 是**唯一**关闭剪贴板泄漏的表达式，却只靠阅读验证——测试在 shim 那一层就停了，只断言桩收到了请求。把它抽成 `lib/std/adapt.js` 里的纯函数并钉住：
+
+```js
+export function copyTextOptions(request) {
+  // The Windows fallback in lib/term.js passes the text's base64 as a
+  // powershell.exe command-line argument, readable by other processes of the
+  // same user, so private text must stay on the OSC 52 path.
+  return { osc52Only: request?.sensitivity === 'private' }
+}
+```
+
+断言三条：`'private'` → `true`、`'public'` → `false`、`undefined` → `false`。然后句柄改成 `term.copyToClipboard(String(request.text), copyTextOptions(request))`。
+
+### I1（同一类缺陷，计划遗漏）：文本字段的长度约束被丢弃
+
+`toTuiQuestions` 把 std 的 `text` 字段映射成 `{kind:'text'}` 时**丢掉了 `minLength`/`maxLength`**，而 `validateQuestionAnswers` 会强制它们、`userInteractionImplementation` 会校验结果——所以一个普通的超长/过短输入会在工厂的 `handle` 里抛错，而不是重新提示。这与 Task 11 为 `secret-input` 修掉的是**同一类**缺陷，且不是既存问题（harness 的 `AskUserQuestionItem` 没有长度概念，这个约束随 std 适配器才出现）。
+
+**修法**：
+1. `toTuiQuestions` 在 TUI question 对象上带上 `kind`、`minLength`、`maxLength`（纯函数，可测）。
+2. `lib/index.js` 把 `questionAnswered()` 的布尔判断换成一个返回错误消息或 `null` 的 `questionAnswerError()`，在原来两个 `if (!questionAnswered())` 的位置调用它。约束只对 `kind === 'text'` 的字段生效——select 字段的自由文本会被适配器丢弃（见 §9.2），所以不适用；而 select 若因此缺了 required 字段，句柄会取消。
+3. 计数用 `.length`（UTF-16 单元），与 `validateQuestionAnswers` 自己的度量一致——这正是 Task 11 在 secret 上踩过的坑，不要再犯。
+
+**为什么长度约束必须在模态里强制**：越界答案若提交，会在工厂的 `handle` 内抛错，那是 capability failure，不是干净的取消，用户也看不到"重新输入"的机会。
+
+---
+
 ## 阻断性发现（最终审查，2026-09-20）：v0.15 组件无法暂存任何协议实现
 
 **这是上游缺口，它使 B 阶段在已发布的 adapter 上不可运行。** 已逐层核实：
