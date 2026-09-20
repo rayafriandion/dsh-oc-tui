@@ -2750,6 +2750,8 @@ Expected: TUI 正常启动，标题栏与 composer 正常渲染。
 
   因此这一项的期望是：**按 Esc 后模态关闭，且工具调用正常结束**（委派给下一个 answerer；没有其他 answerer 时服务以 `NO_PROVIDER` 拒绝，这是诚实的结果）。若观察到挂死，说明修复没生效。
 
+7. **`secret-input` 模态的长度约束（Task 11，无法自动化覆盖）。** 这个模态只由标准协议的 `secret-input` 请求触发，验证用的 profile 里没有消费方会发它，而 `waitForSecret` 与按键分支都在 `apply()` 闭包内、需要真实 TTY 才能激活——所以它的渲染由 `tests/render.test.mjs` 的断言覆盖，而**长度约束分支没有任何自动化覆盖**。若你有办法发一个 `secret-input` 请求（或临时在 `apply()` 里调一次 `waitForSecret({label:'x', minLength: 8, maxLength: 8})`），需要确认三件事：不足 8 个字符时回车显示错误且模态不关闭；超过 8 个字符时同样；恰好 8 个字符时提交成功。另外确认退格删掉一个 emoji 时是一次删掉整个字符（而不是留下半个代理项、只少一个圆点）。若无法触发，**如实记为「未验证」**，不要写成已验证。
+
 Expected: 前五项与改动前一致；第六项**应当与改动前不同**——改动前会挂死，改动后正常结束。**任何一项回归都必须回到 Task 7 修复**——`awaitApproval` / `waitForQuestions` 的抽取是这次改动里风险最高的一处。
 
 - [ ] **Step 3: 验证 private 复制路径**
