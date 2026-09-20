@@ -28,6 +28,7 @@ Published on **npm** as [`dsh-oc-tui`](https://www.npmjs.com/package/dsh-oc-tui)
   - [Settings](#settings)
   - [In-app updates](#in-app-updates)
 - [How it works](#how-it-works)
+- [@dsh-std interop](#dsh-std-interop)
 - [Development](#development)
 - [Troubleshooting](#troubleshooting)
 - [Known limitations](#known-limitations)
@@ -309,6 +310,14 @@ macOS/Linux have no DLL lock, but an install is refused while other dsh processe
 - Agents are created and resumed through `ctx.agents`, the transcript is rebuilt from the session's durable log and fed live by `session/event` (including `assistant/chunk`), model defaults come from `ctx.agentDefaultModel`, and approvals answer the `approval/request` waterfall inline.
 - `ask_user_question` is answered over the `user-questions/request` waterfall: a scoped Cordis waterfall where the modal either returns an answer or delegates with `next()`. An aborted request rejects so the service reports its own `ASK_ABORTED`; requests addressed to another agent are delegated untouched.
 
+## @dsh-std interop
+
+The package carries a [`dsh-plugin.json`](dsh-plugin.json) manifest and a facet at `lib/facet.js`, so a `@dsh-std` host can discover it without running any code. This plugin is a **host and Presentation provider** in that ecosystem, not a protocol consumer: it publishes `presentation.dsh/v1alpha1` `UserInteraction` / `Notification` / `CopyText` and `commands.dsh/v1alpha1` `CommandRuntime` for other components to drive, and it statically consumes only the `Command` resource.
+
+**The facet does not own the TUI's lifecycle, and the double activation is avoided by design.** `@dsh-std/adapter-dsh`'s `mountProfileComponents` mounts the facet of every `dsh-plugin.json` it finds in a profile's `dependencies`, without checking whether the cordis bundle rows already loaded that component — and this plugin *is* a profile dependency that `cordis.patch.yml` also activates. Since the TUI seizes the terminal (raw mode, alternate screen, mouse tracking), a manifest alone would start it twice. The facet is therefore an **interop shell**: it forwards protocol calls through `lib/bridge.js` to whichever TUI instance is live, and reports `{ state: 'degraded' }` when none is. A `dsh-plugin.json` whose facet never starts the TUI is working as intended, not broken.
+
+> 中文说明：[docs/dsh-std-接入说明.md](docs/dsh-std-接入说明.md) — 本插件在 `@dsh-std` 生态里扮演 **Host 与 Presentation 提供方**；facet 只是协议外壳，**不拥有 TUI 的生命周期**，双激活已由设计规避。该文档还记录了清单字段、pin 的 `rc` 版本、`lib/bridge.js` 的契约、adapter 的 staging 契约、明确不实现的协议，以及评审确认的已知行为。
+
 ## Development
 
 ```sh
@@ -401,11 +410,16 @@ lib/web-settings.js  shared WebUI settings projection
 lib/updates.js       in-app update manager (npm registry + installs)
 lib/markdown.js      markdown -> styled lines
 lib/util.js          text/display helpers
+lib/bridge.js        live-TUI registry the @dsh-std facet forwards through
+lib/facet.js         @dsh-std facet entry (interop shell; never starts the TUI)
+lib/std/             @dsh-std protocol adapters (adapt, presentation, commands, command-list)
 bin/dsh-oc-tui.js    convenience launcher for `dsh --profile tui`
 install.sh           one-command installer (Linux/macOS)
 install.ps1          one-command installer (Windows)
+dsh-plugin.json      @dsh-std component manifest (discovery + preflight only)
 cordis.patch.yml     bundle patch layer (TUI rows, agent-presets roster, ask-user tool)
 docs/用户手册.md       Chinese user manual
+docs/dsh-std-接入说明.md  @dsh-std interop scope and constraints (Chinese)
 tests/smoke.test.mjs standalone smoke tests
 ```
 
