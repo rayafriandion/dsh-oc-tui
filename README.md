@@ -43,7 +43,7 @@ Published on **npm** as [`dsh-oc-tui`](https://www.npmjs.com/package/dsh-oc-tui)
 | **Live streaming** | Assistant text and reasoning stream token by token; thinking renders in its own collapsible box that stays collapsed while streaming. |
 | **Tool activity** | Tool cards with a one-line summary (`read src/app.ts`, `run npm test`), flowing spinners while running, and markdown-rendered results. |
 | **Interactive questions** | The model can pause and ask you — option lists, multi-select, free text, and a scrollable plan review — all inline in the terminal. See [Interactive prompts](#interactive-prompts). |
-| **Inline approvals** | `approval/request` prompts are answered with `y` / `n` without leaving the UI. |
+| **Inline approvals** | `approval/request` prompts are answered with `y` / `n` without leaving the UI; the box shows the action and the reason, with room for origin, risk and details when a `@dsh-std` request carries them. |
 | **Session stats** | One stats strip above the composer — turns/steps, LLM and tool wall time, average TTFT, decode throughput, cache-hit rate, and billed input/output tokens — folded from durable events. See [Session stats and the context meter](#session-stats-and-the-context-meter). |
 | **Stats window** | Click the strip or the context meter, or type `/stats`, for the full session-statistics and token-usage breakdown. |
 | **Context meter** | Live context occupancy (`ctx ▓▓░░ 32K/128K 25%`), with the system/tools/messages composition in the same window. |
@@ -217,7 +217,9 @@ Harness commands — `/compact`, `/goal`, `/plan`, … — are forwarded to `ctx
 
 ### Interactive prompts
 
-**Approvals.** When a tool needs permission, the composer area shows `Approval · <tool> · y allow / n deny`. `y` allows once, `n` rejects, `Esc` cancels. The plugin also honours the effective permission preset, so an auto-approving preset does not prompt at all.
+**Approvals.** When a tool needs permission, the composer area is replaced by an approval box. The first row carries the action (`Approval · <tool>`) with the key hints riding along when they fit; the explanation the request supplies follows as a `Summary ·` row. `y` allows once, `n` rejects, `Esc` cancels. A request from a `@dsh-std` component can additionally carry `Origin`, `Risk` and `Details` rows — they are drawn when present and omitted when not, a detail marked private shows its label but not its value, and on a narrow terminal the middle yields with a `… N more` marker while the action and the hints always survive. The plugin also honours the effective permission preset, so an auto-approving preset does not prompt at all.
+
+An approval that outlives the deadline its caller set disappears on its own. That is an **expiry**, not a cancellation: the caller is told `expired` rather than `cancelled`, so a timeout can never be read as a human decision.
 
 **Questions.** The model can ask you directly through the `ask_user_question` tool. The tool is declared by this bundle's `tool-ask-user` row — `dsh-base` mounts the `user-questions` service but not the tool, and a TUI session composes from the base rather than from an agent preset — and it is answered by a modal:
 
@@ -301,7 +303,7 @@ macOS/Linux have no DLL lock, but an install is refused while other dsh processe
 ## How it works
 
 - The plugin is a Cordis function plugin loaded by the `tui` profile. `lib/startup.js` parses the app's flags and provides the `tuiStartup` service; `lib/index.js` owns the UI loop.
-- `lib/term.js` is a zero-dependency terminal engine: raw mode, alternate screen, a diffing cell buffer, and a key decoder (truecolor ANSI, CJK-aware widths). It parks the hidden terminal cursor at the input caret so the OS IME anchors its composition window inside the composer, and it understands both SGR and legacy X10 mouse encodings so wheel and click bytes can never leak into the input text.
+- `lib/term.js` is a zero-dependency terminal engine: raw mode, alternate screen, a diffing cell buffer, and a key decoder (truecolor ANSI, CJK-aware widths). It parks the hidden terminal cursor at the input caret so the OS IME anchors its composition window inside the composer, and it understands both SGR and legacy X10 mouse encodings so wheel and click bytes can never leak into the input text. The cell buffer is also the single chokepoint where every painted string is sanitized: C0, DEL and C1 characters are replaced with a visible `\uFFFD`, so a tool name, a path, a title or a `@dsh-std` request's action can never smuggle an escape sequence into the output stream. The width-preserving placeholder is deliberate — dropping the character instead would silently change layout, whereas a visible one makes the injection obvious.
 - `lib/ui.js` is the responsive view model and renderer (DeepSeek blue-white theme, session rail, transcript, multiline composer, command suggestions, telemetry footer). Transcript lines are cached per block, only the visible window is materialised each frame, streaming paints are coalesced, and the live block re-renders on a short throttle — so render cost stays bounded as history grows. Thinking collapses to keep the transcript readable, and running tools and thinking blocks animate with flowing spinners.
 - `lib/metrics.js` folds durable step/chunk/message events into token, TTFT, throughput, and cache-hit metrics.
 - `lib/interrupt.js` owns the clear/cancel/double-exit state machine used by stdin and `SIGINT`.
@@ -396,6 +398,7 @@ More detail, in Chinese: [docs/用户手册.md](docs/用户手册.md).
 - Deferring a question with `Esc` does not cancel the tool call — it delegates, and with no other answerer the tool call fails. Per-question skip (as the Web UI composer offers) is not implemented.
 - `--resume`, Settings → Manage sessions, the context meter, and the stats strip depend on services mounted by `@deepseek-ai/dsh-base` (`sessionQuery`, `sessionProjections`); a hand-built profile must provide them. The `sessionStats` projection is a web-app-layer row, so the TUI folds those figures from the session log itself when no profile mounts it.
 - The deferred dsh install on Windows waits for the TUI that scheduled it, not for every dsh process on the machine — close other TUI windows (and `dsh web`) before it runs.
+- Two `@dsh-std` presentation surfaces have no caller today, because the runtime protocol support is gated off (see [@dsh-std interop](#dsh-std-interop)). A standard `secret-input` request would open a masked prompt with `minLength`/`maxLength` bounds, and a standard `ApprovalRequest` is the only thing that populates the approval box's `Origin` / `Risk` / `Details` rows. Both paths are written and integration-tested; neither can be reached from a normal `dsh --profile tui` session, which is why the harness-shaped approval box shows only the action and the summary.
 
 ## Layout
 
