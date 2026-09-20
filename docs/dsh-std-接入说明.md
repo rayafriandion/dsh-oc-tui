@@ -107,7 +107,7 @@ TUI 会抢占终端：设置 stdin raw mode、备用屏、鼠标跟踪，并启�
 | `$schema` | 指向上游 `dsh-plugin-0.15.schema.json` 的绝对 URI | 加载器**不抓取**它，只作为编辑期提示 |
 | `manifestVersion` | `"0.15"`（字符串） | Community 清单版本；schema 文件即 `dsh-plugin-0.15.schema.json` |
 | `id` | `io.github.rayafriandion.dsh-oc-tui` | 必须匹配 `^[a-z][a-z0-9]*(?:[.-][a-z0-9][a-z0-9-]*)+$`；命名空间派生自实际控制的 GitHub owner |
-| `name` / `version` / `license` | `dsh-oc-tui` / `0.1.4-pre.1` / `LGPL-3.0-or-later` | `version` 与 `license` 必须与 `package.json` 一致，测试会交叉校验 |
+| `name` / `version` / `license` | `dsh-oc-tui` / `0.1.4` / `LGPL-3.0-or-later` | `version` 与 `license` 必须与 `package.json` 一致，测试会交叉校验 |
 | `source.repository` | 仓库地址 | 仅元数据 |
 | `facets` | 只有 `host` 一个键 | `facets` 是 `additionalProperties: false`，`entry` 与 `apiVersion` 必填；`apiVersion` 必须**精确等于** `v1alpha1`（adapter 是精确匹配，不是 semver） |
 | `requires.contracts` | 一条 `commands.dsh/v1alpha1 Command`，`optional: true` | 见 §3.2 |
@@ -468,6 +468,8 @@ return TUI_OWNED_COMMANDS.map((name) => ({
 ## 验证记录
 
 **日期：** 2026-09-20 ｜ **分支：** `feat/dsh-std-interop` 已合并入 `main`（PR #4，合并提交 `8a9c2ce`）｜ **验证时加载的构建：** `0.1.4-pre.1`
+
+> 正式发布的 `0.1.4` 与验证时加载的 `0.1.4-pre.1` **只有版本号不同**：从 `0d9232d`（装进 profile 的那次提交）到 `0.1.4`，`lib/`、`tests/`、`bin/`、`cordis.patch.yml`、`dsh-plugin.json` 一个字节都没动（`git diff --stat` 为空）。因此下面这份记录覆盖的正是 `0.1.4` 发布的代码，不是它的近似物。
 
 实施计划 Task 13 是「真实 TUI 冒烟」关卡，共 10 项。本节如实区分**已执行**与**未验证/无法执行**，未执行的不写成已执行。
 

@@ -3,7 +3,7 @@
   "manifestVersion": "0.15",
   "id": "io.github.rayafriandion.dsh-oc-tui",
   "name": "dsh-oc-tui",
-  "version": "0.1.4-pre.1",
+  "version": "0.1.4",
   "license": "LGPL-3.0-or-later",
   "source": { "repository": "https://github.com/rayafriandion/dsh-oc-tui" },
   "facets": { "host": { "entry": "lib/facet.js", "apiVersion": "v1alpha1" } },

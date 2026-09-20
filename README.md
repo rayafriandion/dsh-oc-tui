@@ -363,9 +363,9 @@ dsh --profile tui --dump-config   # initializes the base profile once
 # $DSH_HOME/profiles/tui/cordis.patch.yml
 - insert:
     - id: tui-startup
-      name: 'file:///D:/Projects/DeepSeekHarnessPlugins/dsh-oc-tui/lib/startup.js'
+      name: 'file:///path/to/dsh-oc-tui/lib/startup.js'
     - id: tui-app
-      name: 'file:///D:/Projects/DeepSeekHarnessPlugins/dsh-oc-tui/lib/index.js'
+      name: 'file:///path/to/dsh-oc-tui/lib/index.js'
       config:
         sidebar: true
         showReasoning: true
