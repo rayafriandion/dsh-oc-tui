@@ -313,7 +313,7 @@ Session、Storage、Tool、Model、Skill、Workspace、Messages、Permission、E
 
 以下 §9.1–§9.7 每条都是**刻意的**，并且经过代码评审确认。不了解它们的人会把它们读成 bug。
 
-**§9.8 是例外**：那里列的是开放缺口——一项上游阻断加四项尚未完成的设计项——不是既定行为，不应被当作已支持的能力。
+**§9.8 是例外**：那里列的是开放缺口——一项上游阻断加五项尚未完成的设计项——不是既定行为，不应被当作已支持的能力。
 
 **还有一处范围提示**：§9.1–§9.5 描述的是 `lib/std/adapt.js` 与 std 协议 handler（`interact` / `commandRuntime`）上的行为，而那条路径在当前上游下是休眠的（见开头的阻断性发现）。它们描述的是**代码行为**，目前不是用户可见的行为。§9.6 的 `TUI_OWNED_COMMANDS` 与 §9.7 的 Esc 委托走的是 TUI 自己的路径，不受影响。
 
@@ -368,7 +368,7 @@ Session、Storage、Tool、Model、Skill、Workspace、Messages、Permission、E
 
 ### 9.8 开放缺口（不是既定行为）
 
-以下各项都不是既定行为，不应被当作已支持的能力：第一项是**上游阻断**，其余四项是设计里要求过、但**代码（或测试）没有做**的部分。列在这里是为了让它们可见，不是为了给它们一个「已知行为」的名分。
+以下各项都不是既定行为，不应被当作已支持的能力：第一项是**上游阻断**，其余五项是设计里要求过、但**代码（或测试）没有做**的部分。列在这里是为了让它们可见，不是为了给它们一个「已知行为」的名分。
 
 #### 9.8.1 本插件当前不发布任何协议 support（上游阻断，最重要的一项）
 
@@ -399,6 +399,29 @@ Community v0.15 清单无法声明 protocol supports，而 `@dsh-std/lifecycle` 
 #### 9.8.5 `lib/bridge.js` 的两种加载顺序只测了一种
 
 见 §4.1：已测的是「先创建 handler / 工厂，再注册句柄，再调用」；**「先注册句柄、再创建 handler / 工厂」没有测试**。前者足以抓住早绑定，所以这个缺口是覆盖完整性问题，不是已知缺陷。
+
+#### 9.8.6 命令目录返回的 descriptor 是残缺的，只有 `name` 与 `description`
+
+协议 `CommandDescriptor` 要求**七个**成员：`name`、`description`、`owner`、`resource`、`available`、`missingPresentation`、`issues`（`node_modules/@dsh-std/command/lib/index.d.ts:56-70`；另有可选的 `input`）。而本插件的活体句柄只产出两个：
+
+```js
+return TUI_OWNED_COMMANDS.map((name) => ({
+  name,
+  description: COMMAND_DESCRIPTIONS[name] ?? '',
+}))
+```
+
+（`lib/index.js:2999-3007`；`lib/std/commands.js:54-60` 的 handler 把它原样包进 `CommandCatalog`，不补字段。）
+
+**没有任何东西会拦住它。** `commandRuntimeImplementation` 的 `handle` 只校验**输入**（`validateCatalogInput` / `validateExecutionInput`），**从不校验输出**（`node_modules/@dsh-std/command/lib/index.js:73-78`）。所以缺字段不会在提供方一侧抛错，故障被推迟到消费方：
+
+- `descriptor.owner` 是 `undefined`，因此 `descriptor.owner.component` **抛 `TypeError`**（不是读到 `undefined`）；
+- `descriptor.resource` 与 `descriptor.available` 都是 `undefined`；
+- 遍历 `descriptor.missingPresentation` 或 `descriptor.issues` 同样会**抛 `TypeError`**（`for...of undefined`），因为它们是 `undefined` 而不是 `[]`。
+
+**这一项尚未实现**，而且不是一次字段映射就能补齐的：`owner` / `resource` 的取值本身就没有决定。设计 §6.2 只说 `catalog(...)` 返回 `CommandDescriptor[]`（`docs/superpowers/specs/2026-09-19-dsh-std-interop-design.md:402-403`），**从未决定 TUI 自有命令的 `owner` 与 `resource` 该填什么**；实施计划反而把形状写窄成 `[{name, description}]`（`docs/superpowers/plans/2026-09-19-dsh-std-interop.md:2092`）。一个计划层面的取舍与协议自己的类型冲突时，那是**缺口，不是决定**——这正是它被记在这里、而不是被当作已支持能力的原因。
+
+**范围说明：Phase B 目前是休眠的**（Community v0.15 清单无法声明 protocol supports，`lib/facet.js` 因此什么都不暂存——见开头的[阻断性发现](#阻断性发现本插件当前不发布任何协议-support)），所以**今天没有任何消费方能碰到它**。这是 shim 上线之前**必须补上**的工作，不是当前在发生的缺陷。因为 `owner` / `resource` 的形态未定，本文不臆测一个「正确」的 descriptor 应该长什么样。
 
 ---
 
