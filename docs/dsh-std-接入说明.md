@@ -94,7 +94,7 @@ TUI 会抢占终端：设置 stdin raw mode、备用屏、鼠标跟踪，并启�
 
 `commands.dsh/v1alpha1 Command` 是 TUI **唯一静态消费**的东西：它要读别人贡献的命令。
 
-Presentation 与 ContributionHost 是 TUI **提供**的。而 Community v0.15 的清单**没有 `supports` 字段**——静态清单只能声明 `requires`，不能声明 support。support 只能运行时通过 `context.protocols.implement(...)` 产生。把提供的协议写进 `requires.contracts` 会变成**虚假声明**：那是在说「我需要别人提供它」，与事实相反。
+Presentation 是 TUI **提供**的（ContributionHost **不在其中**：本插件不注册贡献宿主，`@dsh-std/ui` 也没有可供 facet 使用的实现工厂，见 §7.2）。而 Community v0.15 的清单**没有 `supports` 字段**——静态清单只能声明 `requires`，不能声明 support。support 只能运行时通过 `context.protocols.implement(...)` 产生。把提供的协议写进 `requires.contracts` 会变成**虚假声明**：那是在说「我需要别人提供它」，与事实相反。
 
 ### 3.3 为什么命令走 `x-dev.dsh-std.extensions` 富路径
 
@@ -161,7 +161,7 @@ liveTui()               -> handle | null
 
 facet 的 handler 在**被调用时**查 `liveTui()`，**不在** `activate()` 时捕获句柄。原因是 adapter 的挂载时机取决于 profile 的 cordis 配置，与 bundle 行的加载顺序**没有保证**：可能 facet 先挂载、TUI 后启动，也可能相反。晚绑定让两种顺序都正确。
 
-测试对两种顺序各测一遍。
+测试覆盖的是**一种**顺序：先创建 handler / 工厂，再 `registerLiveTui`，最后调用——这恰好是能抓住早绑定的一种（若实现在创建时就捕获句柄，断言会立刻失败）。**反过来的顺序（先注册句柄、再创建 handler / 工厂）没有测试**：它在早绑定与晚绑定两种实现下都会通过，所以不是必需的判别用例，但目前确实没有覆盖。
 
 ### 4.2 幂等释放，且不得清掉更新的注册
 
@@ -199,7 +199,7 @@ export function registerLiveTui(handle) {
 
 当前状态（已核对）：
 
-- 全仓库静态 import `@dsh-std/*` 的只有两个文件：`lib/std/presentation.js`（`@dsh-std/presentation`）与 `lib/std/commands.js`（`@dsh-std/command`）。两者都**只**被 `lib/facet.js` 的动态 import 加载；
+- **`lib/` 下**静态 import `@dsh-std/*` 的只有两个文件：`lib/std/presentation.js`（`@dsh-std/presentation`）与 `lib/std/commands.js`（`@dsh-std/command`）。两者都**只**被 `lib/facet.js` 的动态 import 加载。（`tests/std.test.mjs` 也静态 import `@dsh-std/manifest`，但那只是 devDependency，不在运行时的 import 图上。）
 - `lib/index.js` 的本地 import 链上有 `lib/bridge.js`（0 个 peer）、`lib/std/adapt.js`（0 个）、`lib/std/command-list.js`（0 个）；
 - **纯数据放在零依赖模块 `lib/std/command-list.js`**：`COMMAND_PLACEMENT`、`TUI_OWNED_COMMANDS`、`COMMAND_DESCRIPTIONS`。`lib/std/commands.js` 从它 import 并再导出，所以协议侧仍是这些数据的单一入口。
 
@@ -276,7 +276,9 @@ Session、Storage、Tool、Model、Skill、Workspace、Messages、Permission、E
 
 ## 9. 已知行为（known properties）
 
-以下每条都是**刻意的**，并且经过代码评审确认。不了解它们的人会把它们读成 bug。
+以下 §9.1–§9.7 每条都是**刻意的**，并且经过代码评审确认。不了解它们的人会把它们读成 bug。
+
+**§9.8 是例外**：那三项是尚未完成的开放缺口，不是既定行为，不应被当作已支持的能力。
 
 ### 9.1 只填自由文本的多选字段，整个字段丢失
 
@@ -311,9 +313,11 @@ Session、Storage、Tool、Model、Skill、Workspace、Messages、Permission、E
 ### 9.6 TUI 的 9 个命令出现两次
 
 - `dsh-plugin.json` 的静态贡献：用于**发现与预检**（不执行代码就能被宿主和 CI 读取）；
-- `lib/std/command-list.js` 的 `TUI_OWNED_COMMANDS`：**执行路径**，`lib/index.js` 的 `runCommand` 本地 switch 与 `executeCommand` 的所有权判断都用它。
+- `lib/std/command-list.js` 的 `TUI_OWNED_COMMANDS`：**命令目录与执行归属判断**——`lib/index.js` 的 `commandCatalog`（列出命令）与 `executeCommand`（判断一行命令是否归 TUI 所有）读它。
 
-两份数据由测试钉在一起（从 `dsh-plugin.json` 投影出的命令名集合必须等于 `TUI_OWNED_COMMANDS`），所以它们不能漂移。
+注意：`runCommand` 的本地 switch **不读这个常量**，它用的是字面量分支（`settings` / `help` / `stats` / `new` / `resume` / `model` / `provider` / `clear` / `cancel` / `quit` / `exit` / `rewind`）。设计 §6.2 把两者描述为**两份独立的清单**，不要把它们合并成一份：静态贡献用于发现与预检，本地 switch 是实际执行路径，而 `TUI_OWNED_COMMANDS` 是目录与归属判断的数据源。
+
+两份数据由测试钉在一起（从 `dsh-plugin.json` 投影出的命令名集合必须等于 `TUI_OWNED_COMMANDS`），所以它们不能漂移。本地 switch 的字面量分支与这份清单之间**没有**自动化断言——Task 10 的实现报告里做过一次手工交叉核对（每个自有命令都有对应的 case 分支），但那是人跑的一次性检查，不是测试。
 
 现阶段不会有用户可见症状：adapter 把 `Command` 扩展映射进注册表后，只有当某个产品 UI 注册了匹配 placement 的 surface provider 才会把它 surface 回来。
 
@@ -323,7 +327,27 @@ Session、Storage、Tool、Model、Skill、Workspace、Messages、Permission、E
 
 现在 `next` 作为参数传入（`askQuestions(req, next)`，`onDefer: next` 是已解析的绑定），Esc 真正委托给 waterfall 的下一个应答者——这正是原注释一直声称的行为。
 
-**这是本次接入里唯一一处用户可见的行为变化**，并且是修复而非回归。它没有自动化覆盖（模态路径需要真实 TTY 与 cordis 上下文），只在真实终端的冒烟测试里验证。
+**这是本次接入里唯一一处用户可见的行为变化**，并且是修复而非回归。它没有自动化覆盖（模态路径需要真实 TTY 与 cordis 上下文），也**尚未在真实终端上验证**：这项冒烟属于实施计划的 Task 13，截至本文写作时**尚未执行**，也没有 task-13 报告。结果会记录在那里。
+
+### 9.8 尚未完成的三项（开放缺口，不是既定行为）
+
+以下三项在设计的适配清单里，但**代码和文档都没有做**。列在这里是为了让它们可见，不是为了给它们一个「已知行为」的名分。它们需要后续工作，本插件当前不应被理解为已支持这三件事。
+
+#### 9.8.1 授权提示丢弃了 `origin`、`details` 与 `risk`
+
+标准路径只把 `request.action` 映射为 `toolName`、`request.summary` 映射为 `reason`（`lib/index.js` 的 `interact` 审批分支），`origin`、`details`、`risk` 三个字段**没有被读取，也没有被显示**。
+
+**这可能是一条 MUST 违反**：协议文本（据评审引述）要求提供方清晰显示 `action`、`summary`、`origin`，以及策略允许的 `details`。**写本文时无法重新核对这段引文**——上游 clone 的 `docs/proposals/` 是空的，且当时没有网络。所以读者在决定「实现这些显示」还是「修改我们的声称」之前，**应先对着协议原文确认**这条要求的确切措辞与强度。
+
+值得注意的是，`details` 可能正是用户做出知情决定所需要的信息；当前提示只画工具名与理由，用户看不到它。
+
+#### 9.8.2 `deadline` 被忽略，`{ status: 'expired' }` 永远不会产生
+
+请求里带 `deadline` 字段，但**没有任何代码读它**；中止（abort）一律映射为 `cancelled`。后果是消费方设置的截止时间不被遵守，模态会无限期等待，而协议里 `expired` 这个状态在本插件里不可达。
+
+#### 9.8.3 `lib/bridge.js` 的两种加载顺序只测了一种
+
+见 §4.1：已测的是「先创建 handler / 工厂，再注册句柄，再调用」；**「先注册句柄、再创建 handler / 工厂」没有测试**。前者足以抓住早绑定，所以这个缺口是覆盖完整性问题，不是已知缺陷。
 
 ---
 
@@ -339,4 +363,5 @@ Session、Storage、Tool、Model、Skill、Workspace、Messages、Permission、E
 | `lib/std/commands.js` | CommandRuntime 的 handler 与工厂接线（静态 import `@dsh-std/command`） |
 | `lib/std/command-list.js` | 零依赖纯数据：placement 坐标、TUI 自有命令、命令描述 |
 | `lib/index.js` | 在 `apply()` 内注册活体句柄；命令执行路径 |
-| `tests/std.test.mjs` | 本接入的全部自动化测试 |
+| `tests/std.test.mjs` | 本接入的协议、适配与清单测试（不含渲染） |
+| `tests/render.test.mjs` | secret 提示模态的渲染与「无残留」断言（其余渲染回归也在此） |
