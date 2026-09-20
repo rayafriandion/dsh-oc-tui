@@ -536,7 +536,7 @@ ReferenceError: next is not defined
 **以下均未在真实终端上执行**，不应被读作已验证：
 
 - **第 1–5 项**（正常启动与标题栏/composer 渲染、普通消息流式回复与审批 `y`/`n`、`/help`·`/stats`·`/settings`、`Ctrl+P` Settings 与凭据掩码、`Esc Esc`·`/rewind`）——**未验证**。真人反馈是「没有什么变化」，但如本节开头所记，那次运行加载的是 09-11 的旧构建，不含本分支任何改动，因此这句话对本分支不成立。要验这几项，必须先重打包重装。
-- **第 10 项**（极窄终端下面板宽度钳制，21 列真实边界）——**未验证**；渲染测试的 `[26, 20]` 覆盖了钳制分支，真实 21/22 列的边界未在终端里试过。
+- **第 10 项**（极窄终端 21 列边界）——**无法在真实终端执行**，与第 7/8/9 项同一类原因：它测的是 `_paintSecret` 的宽度钳制，而 secret 面板只由标准协议的 `secret-input` 请求打开（`waitForSecret` 的唯一调用者在 `lib/index.js:3032` 的 `request.kind === 'secret-input'` 分支里，该 handler 又只由 facet 暂存，而 facet 当前什么都不暂存）。所以正常会话里打不开这个面板，也就无法把终端拉到 22 列去看右边框。钳制分支本身由 `tests/render.test.mjs` 的 `[26, 20]` 覆盖。
 - **第 3 步**（private 复制路径走 OSC 52、未拉起 `powershell.exe`）——**未验证**。
 - **第 1 步与第 4 步**（打包、装进本地 profile、再卸载）——**第 1 步已完成，第 4 步未执行**。版本号已 bump 到 `0.1.4-pre.1`，已重新打包，并已装进 `--profile tui`（`dsh plugin --profile tui list` 显示 `dsh-oc-tui 0.1.4-pre.1`）。安装后的副本已逐项核对：`lib/facet.js`、`lib/bridge.js`、`lib/std/` 五个文件与 `dsh-plugin.json` 都在包内，`lib/ui.js` 的 `_approvalLines` 出现 3 次，两个清单的版本都是 `0.1.4-pre.1`。**但第 1–5 项的真人冒烟仍未执行**——装对了构建只是让验证成为可能，不等于验证过了。仓库里原来那个 09-11 的 `dsh-oc-tui-0.1.3.tgz` 已删除；`*.tgz` 本就在 `.gitignore` 里、从未进过仓库。
 
