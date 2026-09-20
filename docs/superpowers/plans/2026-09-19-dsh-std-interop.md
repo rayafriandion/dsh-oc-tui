@@ -2970,3 +2970,22 @@ git commit -m "docs(tui): record the manual smoke results for the std interop"
 | 人工验证（spec §8 未覆盖的真实终端路径） | Task 13 |
 
 **已知的、刻意留下的不一致：** 命令同时存在于 `dsh-plugin.json` 的静态贡献与 `lib/std/commands.js` 的 `TUI_OWNED_COMMANDS`（Task 9 的测试断言两者一致）。这是 spec §10 第 2 条记录的限制——静态贡献用于发现与预检，本地列表是执行路径。测试把两者钉在一起，所以任何一侧改动都会失败，不会静默漂移。
+
+## 阻断性发现（Task 13，2026-09-20）：那次真实终端冒烟跑的不是本分支的构建
+
+**这一条决定 Task 13 其余各项的证据价值，因此必须记在计划里而不是只记在文档里。**
+
+真人冒烟的反馈是：**「一样的，没有什么变化。」** 这句话本身没有错，但它描述的不是本分支的构建。核对 `~/.dsh/profiles/tui` 实际加载的产物：
+
+| 检查 | 结果 |
+| --- | --- |
+| profile 里 `node_modules/dsh-oc-tui` 的指向 | 符号链接到 `.pnpm/dsh-oc-tui@file+…+dsh-oc-tui-0.1.3.tgz__reqh5…`，该 tgz 时间戳 **2026-09-11** |
+| 该构建是否含 `lib/facet.js` / `lib/bridge.js` / `lib/std/` | **都不含**——三样都是本分支新增的 |
+| 该构建的审批提示形态 | `_approvalLines` 出现 **0 次**，仍是改动前的单行 `Approval · <toolName> · y allow / n deny` |
+| 仓库根目录的 `dsh-oc-tui-0.1.3.tgz` | 同一个 09-11 的产物（同样没有 `lib/std/`、同样没有 `_approvalLines`），即本计划早已注明的「既有产物，未重新打包」 |
+
+**结论：** `dsh --profile tui` 起来的是本分支之前的代码。所以「没有什么变化」是那个构建的预期表现，**不能**当作本分支第 1–5 项的证据。它只说明一件事：改动前那份代码在真实终端里仍然正常——而那不是本关卡的验收条件。
+
+**要补做 Step 1 才能验本分支。** 这里有个版本号陷阱：分支的 `package.json` 仍是 `0.1.3`，与旧 tgz 同名同版本，直接 `npm pack` 会覆盖仓库里那个旧文件、且事后分不出装的是哪一个。建议先 bump 版本号（如 `0.1.4`）再打包，让「装的是哪个构建」没有歧义。
+
+**另有一层与上面无关的、结构性的限制：** 审批模态的 Origin / Risk / Details 三行**无法在现有形态下验证**。这三个字段只可能来自标准协议的 `ApprovalRequest`，而本插件自身的审批来自 harness 的 `approval/request`，其载荷只有 `toolName` 与 `reason`（`lib/index.js:1120` 只映射这两个字段，origin/details/risk 保持 `undefined`），`lib/ui.js:1813` 起也只画实际存在的字段；同时 B 阶段休眠，没有任何标准请求能到达。所以即便按 Step 1 重装了分支构建，正常跑一次也看不到这三行——它们需要一个真正的标准请求方。这是开头那条阻断性发现（v0.15 组件无法暂存任何协议实现）的直接后果，不是缺陷。
