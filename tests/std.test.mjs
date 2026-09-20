@@ -568,8 +568,66 @@ const PARTICIPANT = "test/dsh-oc-tui"
   release()
 }
 
-// ---- facet activation registers the presentation implementations ----
+// ---- facet activation stages only declared supports ----
+// The lifecycle's `implement` (LifecycleCoordinator.stageProtocol) throws
+// `facet attempted to implement undeclared protocol ...` for any support the
+// facet's own projection does not declare, and a throw during activate makes
+// the adapter's mountProfileComponents roll back EVERY component in the profile.
+// Block A pins the path a Community v0.15 profile actually takes today (nothing
+// is declared, so nothing may be staged); Block B pins the future-compatible
+// path where the projection does declare the supports the shims publish.
 {
+  // Block A: the real path today. A v0.15 manifest cannot declare supports at
+  // all, so `plan.selected` carries an empty list and activate must stage
+  // nothing rather than throw.
+  const mod = await import(pathToFileURL(join(repoRoot, "lib/facet.js")).href)
+  const registered = []
+  let scopeAdds = 0
+  const context = {
+    identity: {
+      component: "io.github.rayafriandion.dsh-oc-tui",
+      facet: "host",
+      participantId: "test/facet-participant",
+    },
+    plan: {
+      selected: [{
+        participantId: "test/facet-participant",
+        identity: { facet: "host" },
+        facet: { protocols: { supports: [] } },
+      }],
+    },
+    scope: { signal: new AbortController().signal, add() { scopeAdds++ } },
+    protocols: {
+      agreement: () => undefined,
+      client: () => undefined,
+      implement(support, implementation) {
+        registered.push({ support, implementation })
+        return () => {}
+      },
+    },
+    extensions: { publish: () => () => {} },
+  }
+  let activateThrew = false
+  try { await mod.default.activate(context) } catch { activateThrew = true }
+  ok("activate resolves with no declared supports", !activateThrew)
+  eq("nothing is staged when the facet declares no supports", registered.length, 0)
+  eq("no disposer is registered on the scope", scopeAdds, 0)
+
+  const release = registerLiveTui({ tag: "facet-no-supports" })
+  const degraded = await mod.default.snapshot()
+  eq("snapshot is degraded even with a live TUI", degraded.state, "degraded")
+  ok("snapshot names the no-declared-supports reason",
+    typeof degraded.message === "string"
+    && degraded.message.includes("cannot declare protocol supports"))
+  release()
+  eq("the handle is released", liveTui(), null)
+}
+
+{
+  // Block B: the future-compatible path. This is the path that goes live if
+  // upstream lets a v0.15 component declare supports; it is what keeps the
+  // shim coverage meaningful, so the three-kind and participantId assertions
+  // live here rather than in Block A.
   const mod = await import(pathToFileURL(join(repoRoot, "lib/facet.js")).href)
   const registered = []
   const context = {
@@ -580,7 +638,22 @@ const PARTICIPANT = "test/dsh-oc-tui"
       facet: "host",
       participantId: "test/facet-participant",
     },
-    plan: {},
+    plan: {
+      selected: [{
+        participantId: "test/facet-participant",
+        identity: { facet: "host" },
+        facet: {
+          protocols: {
+            supports: [
+              { apiVersion: "presentation.dsh/v1alpha1", kind: "UserInteraction" },
+              { apiVersion: "presentation.dsh/v1alpha1", kind: "Notification" },
+              { apiVersion: "presentation.dsh/v1alpha1", kind: "CopyText" },
+              { apiVersion: "commands.dsh/v1alpha1", kind: "CommandRuntime" },
+            ],
+          },
+        },
+      }],
+    },
     scope: { signal: new AbortController().signal, add() {} },
     protocols: {
       agreement: () => undefined,
@@ -611,6 +684,12 @@ const PARTICIPANT = "test/dsh-oc-tui"
     ["test/facet-participant", "test/facet-participant", "test/facet-participant", "test/facet-participant"])
   eq("each implementation is staged with its own protocol",
     registered.map((r) => r.implementation.protocol === r.support), [true, true, true, true])
+  // The declared-supports gate is cleared by a non-empty declaration, so the
+  // facet is honest again: with a live TUI and a real staging it reports active.
+  const release = registerLiveTui({ tag: "facet-declared-supports" })
+  eq("snapshot is active once supports are declared and staged",
+    (await mod.default.snapshot()).state, "active")
+  release()
 }
 
 // ---- command runtime ----
@@ -735,7 +814,25 @@ const PARTICIPANT = "test/dsh-oc-tui"
   const registered = []
   const context = {
     identity: { component: "io.github.rayafriandion.dsh-oc-tui", facet: "host", participantId: "test/facet-participant" },
-    plan: {},
+    // Declared supports are what let activate stage anything at all; without
+    // them the lifecycle's implement would throw and this block would register
+    // nothing (see Block A above).
+    plan: {
+      selected: [{
+        participantId: "test/facet-participant",
+        identity: { facet: "host" },
+        facet: {
+          protocols: {
+            supports: [
+              { apiVersion: "presentation.dsh/v1alpha1", kind: "UserInteraction" },
+              { apiVersion: "presentation.dsh/v1alpha1", kind: "Notification" },
+              { apiVersion: "presentation.dsh/v1alpha1", kind: "CopyText" },
+              { apiVersion: "commands.dsh/v1alpha1", kind: "CommandRuntime" },
+            ],
+          },
+        },
+      }],
+    },
     scope: { signal: new AbortController().signal, add() {} },
     protocols: {
       agreement: () => undefined,
