@@ -2881,7 +2881,7 @@ git commit -m "docs(tui): explain the dsh-std interop scope and the facet constr
 - Consumes: 全部前面的产物
 - Produces: 验证结论（若失败，回到对应 task 修复）
 
-- [ ] **Step 1: 装到本地 profile 并启动**
+- [x] **Step 1: 装到本地 profile 并启动**
 
 Run:
 ```bash
@@ -2891,7 +2891,7 @@ dsh --profile tui
 ```
 Expected: TUI 正常启动，标题栏与 composer 正常渲染。
 
-- [ ] **Step 2: 验证既有交互没坏**
+- [x] **Step 2: 验证既有交互没坏**
 
 在 TUI 内依次验证：
 
@@ -2914,7 +2914,7 @@ Expected: TUI 正常启动，标题栏与 composer 正常渲染。
 
 Expected: 前五项与改动前一致；第六项**应当与改动前不同**——改动前会挂死，改动后正常结束。**任何一项回归都必须回到 Task 7 修复**——`awaitApproval` / `waitForQuestions` 的抽取是这次改动里风险最高的一处。
 
-- [ ] **Step 3: 验证 private 复制路径**
+- [x] **Step 3: 验证 private 复制路径**
 
 在 TUI 内复制一段内容（确认走 OSC 52 而非 PowerShell），然后确认 Windows 上 `powershell.exe` 没有因为复制而被拉起：
 
@@ -2924,7 +2924,7 @@ tasklist | grep -i powershell
 ```
 Expected: 没有由 TUI 复制动作产生的新 `powershell.exe` 进程。
 
-- [ ] **Step 4: 卸载临时安装**
+- [ ] **Step 4: 卸载临时安装**（未执行：profile 需保留分支构建）
 
 Run:
 ```bash
@@ -2933,7 +2933,7 @@ rm dsh-oc-tui-0.1.3.tgz
 ```
 Expected: profile 回到干净状态。
 
-- [ ] **Step 5: 记录结论**
+- [x] **Step 5: 记录结论**
 
 在 `docs/dsh-std-接入说明.md` 末尾追加一节「验证记录」，写明确切日期、验证过的五项交互、以及任何未覆盖的路径。若某项未能验证，如实写明「未验证」而不是省略。
 
