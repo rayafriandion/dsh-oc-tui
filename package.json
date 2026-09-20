@@ -25,7 +25,7 @@
   "author": "rayafriandion",
   "license": "LGPL-3.0-or-later",
   "scripts": {
-    "test": "node tests/smoke.test.mjs && node tests/render.test.mjs && node tests/rewind.test.mjs && node tests/std.test.mjs",
+    "test": "node tests/smoke.test.mjs && node tests/render.test.mjs && node tests/rewind.test.mjs && node tests/std.test.mjs && node tests/esc-questions.test.mjs",
     "check": "node --check lib/index.js && node --check lib/ui.js && node --check lib/term.js && node --check lib/metrics.js && node --check lib/interrupt.js && node --check lib/web-settings.js && node --check lib/updates.js && node --check lib/rewind.js && node --check lib/bridge.js && node --check lib/facet.js && node --check lib/std/adapt.js && node --check lib/std/presentation.js && node --check lib/std/command-list.js && node --check lib/std/commands.js && node --check bin/dsh-oc-tui.js"
   },
   "main": "lib/index.js",

@@ -364,7 +364,7 @@ Session、Storage、Tool、Model、Skill、Workspace、Messages、Permission、E
 
 现在 `next` 作为参数传入（`askQuestions(req, next)`，`onDefer: next` 是已解析的绑定），Esc 真正委托给 waterfall 的下一个应答者——这正是原注释一直声称的行为。
 
-**这是本次接入里唯一一处用户可见的行为变化**，并且是修复而非回归。它没有自动化覆盖（模态路径需要真实 TTY 与 cordis 上下文），也**尚未在真实终端上验证**：这项冒烟属于实施计划的 Task 13，截至本文写作时**尚未执行**，也没有 task-13 报告。结果会记录在那里。
+**这是本次接入里唯一一处用户可见的行为变化**，并且是修复而非回归。它现在有自动化覆盖：`tests/esc-questions.test.mjs` 用真实 cordis 上下文与真实 TTY 按键路径驱动这条分支（见文末[验证记录](#验证记录)）。
 
 ### 9.8 开放缺口（不是既定行为）
 
@@ -439,3 +439,53 @@ return TUI_OWNED_COMMANDS.map((name) => ({
 | `lib/index.js` | 在 `apply()` 内注册活体句柄；命令执行路径 |
 | `tests/std.test.mjs` | 本接入的协议、适配与清单测试（不含渲染） |
 | `tests/render.test.mjs` | secret 提示模态的渲染与「无残留」断言（其余渲染回归也在此） |
+| `tests/esc-questions.test.mjs` | 真实 cordis 上下文 + 真实 TTY 按键路径下的提问模态 Esc 行为（Task 13 第 6 项） |
+
+---
+
+## 验证记录
+
+**日期：** 2026-09-20 ｜ **分支：** `feat/dsh-std-interop` ｜ **HEAD：** `86d6275`
+
+实施计划 Task 13 是「真实 TUI 冒烟」关卡，共 10 项。本节如实区分**已执行**与**未验证**，未执行的不写成已执行。
+
+### 已执行：第 6 项 —— 提问模态上的 Esc（唯一的行为变更）
+
+**结论：与改动前的预期一致，验证通过。**
+
+验证方式不是人工敲键，而是 `tests/esc-questions.test.mjs`：它把**真实的** `lib/index.js` 的 `apply()` 挂进**真实的** cordis `Context`，注册**真实的** `@deepseek-ai/dsh-user-questions` 的 `UserQuestionService`（也就是 `ask_user_question` 工具实际调用的那个服务），再通过 `lib/term.js` 自己的按键解码器向无头 TTY 喂入**原始 ESC 字节**。因此 `ctx.waterfall`、`next` 续延、`decodeKey`、`handleQuestionKey`、模态渲染都是真的——只有终端本身是模拟的。
+
+三个场景，18 条断言全绿：
+
+| 场景 | 结果 |
+| --- | --- |
+| 提问模态打开 → Esc，且 waterfall 上没有其他应答者 | promise **settle**（不再挂死），以服务自己的 `NO_PROVIDER` 拒绝；模态关闭 |
+| 提问模态打开 → Esc，waterfall 下游有另一个应答者 | Esc **真的委派**：下游应答者的答案就是工具调用收到的结果 |
+| 提问模态打开 → Enter 正常作答 | 回归护栏：答案与所选选项原样送达 |
+
+**这个测试确实能抓到那个 bug**（不是空过）：把 `lib/index.js` 临时改回重构前的形态（`askQuestions(req)` + `onDefer: () => next()` 中的自由标识符 `next`），该测试立刻失败，报的正是计划里记录的那一条：
+
+```
+ReferenceError: next is not defined
+    at onDefer (lib/index.js:1242)
+    at Object.defer (lib/index.js:1159)
+    at handleQuestionKey (lib/index.js:1403)
+```
+
+这正是 §9.7 描述的「`settled` 已置位、模态已 `detach()`，但 promise 永不 settle」的成因。改动已还原，`git diff` 为空。
+
+**边界说明：** 这条验证覆盖的是「Esc 之后的行为」与「按键→模态→委派」的完整链路。它**没有**覆盖真实终端仿真器本身（备用屏、raw mode、OSC 52、鼠标跟踪）在真实 Windows Terminal / iTerm 下的表现，也没有覆盖真实模型发起 `ask_user_question` 工具调用的整条 agent 循环——这两项需要一个真人坐在真实终端前。就本项要回答的问题（Esc 是委派还是挂死）而言，结论是确定的。
+
+### 未验证（Task 13 的其余各项）
+
+**以下均未在真实终端上执行**，不应被读作已验证：
+
+- **第 1 项**（TUI 正常启动、标题栏与 composer 渲染）、**第 2 项**（普通消息流式回复；审批模态 `y`/`n`）、**第 3 项**（`/help`、`/stats`、`/settings`）、**第 4 项**（`Ctrl+P` Settings 与凭据掩码）、**第 5 项**（`Esc Esc` 与 `/rewind`）——都是既有交互，本次改动未触碰其代码路径，且 `npm test` 全绿，但**没有在真实终端里逐项走过**。
+- **第 7 项**（`secret-input` 模态的长度约束）——**未验证**。验证用的 profile 里没有 std 消费方会发出 `secret-input` 请求，本次也没有在 `apply()` 里临时插桩调用 `waitForSecret`。它的保障仍然只是 `tests/render.test.mjs` 的渲染断言；`minLength` / `maxLength` 分支与退格删 emoji 的行为**没有**真实终端覆盖。
+- **第 8 项**（secret 模态下的粘贴路径）——**未验证**，同上。
+- **第 9 项**（`secret-input` 边界值与校验器一致，UTF-16 计量）——**未验证**，同上。
+- **第 10 项**（极窄终端下面板宽度钳制，21 列真实边界）——**未验证**；渲染测试的 `[26, 20]` 覆盖了钳制分支，真实 21/22 列的边界未在终端里试过。
+- **第 3 步**（private 复制路径走 OSC 52、未拉起 `powershell.exe`）——**未验证**。
+- **第 1 步与第 4 步**（`npm pack` 装进本地 profile 再卸载）——**未执行**；本仓库的 `dsh-oc-tui-0.1.3.tgz` 是既有产物，未重新打包，也未对 `--profile tui` 做过安装/卸载往返。
+
+因此本节**只**为 §9.7 的 Esc 行为提供了真实运行时的证据；其余各项的覆盖状态与本次改动前相同。
