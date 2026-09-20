@@ -2401,7 +2401,11 @@ Expected: FAIL — 实际得到 `["question","approval"]`，因为 `presentation
 ```js
 // The standalone secret prompt is a new painted overlay; like every other
 // overlay it must not strand cells behind it when it opens, updates or closes.
-for (const [COLS, ROWS] of [[80, 24], [60, 20], [120, 40], [40, 24]]) {
+// 26 columns is the smallest size where the panel still fits: the width floor
+// is 20 and a centred x needs the remaining columns, so the clamp branch is
+// reachable here and not at 40. Below ~21 columns the panel is clipped and only
+// a human can judge it.
+for (const [COLS, ROWS] of [[80, 24], [60, 20], [120, 40], [40, 24], [26, 20]]) {
   const { term, writes } = paintCapture(COLS, ROWS)
   const app = new App({ cols: COLS, rows: ROWS, on() {} })
   app.setSession({ id: "s", title: "Secret" })
@@ -2602,7 +2606,11 @@ Expected: FAIL — `this._paintSecret is not a function`（Step 3 只加了状�
        // An OSC 52 clipboard reply answers a clipboard *read* (an image
        // request). While the prompt is open it must not reach the composer, and
        // it is not something the user typed, so it is dropped rather than
-       // guessed at.
+       // guessed at. Clearing the outstanding-read flag matters: handleClipboard
+       // is what normally clears it, and we return before reaching it, so
+       // leaving it set would let a later unsolicited reply be routed to the
+       // composer — the same plaintext path this guard exists to close.
+       clipboardRequested = false
        return
      }
 ```
@@ -2800,7 +2808,7 @@ Expected: TUI 正常启动，标题栏与 composer 正常渲染。
 
 9. **`secret-input` 的边界值与校验器一致。** 校验器用 `result.secret.length`（UTF-16 单元）。用一个 `maxLength: 2` 的请求粘贴两个 emoji：模态应当**拒绝**（因为 UTF-16 长度是 4）。若模态接受了，说明度量又退回按码点计数了。
 
-10. **极窄终端（≤ 28 列）的面板宽度钳制。** `_paintSecret` 的宽度下限是 20 列并额外按可用列数钳制；`Screen.set` 会静默裁剪越界坐标，所以溢出只表现为面板被截断、`gridDiff` 抓不到。窄于 28 列时确认面板右边框可见。
+10. **极窄终端的面板宽度钳制。** `_paintSecret` 的宽度下限是 20 列并额外按可用列数钳制；`Screen.set` 会静默裁剪越界坐标，所以溢出只表现为面板被截断、`gridDiff` 抓不到。渲染测试的 `[26, 20]` 覆盖了钳制分支，但**真实边界是 21 列**（21 列时面板恰好放下，20 列及以下仍会被裁剪）。若你要验，试 22 列左右——面板右边框应当可见。
 
 Expected: 前五项与改动前一致；第六项**应当与改动前不同**——改动前会挂死，改动后正常结束。**任何一项回归都必须回到 Task 7 修复**——`awaitApproval` / `waitForQuestions` 的抽取是这次改动里风险最高的一处。
 
