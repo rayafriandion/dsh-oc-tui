@@ -314,7 +314,7 @@ Expected: FAIL — `ENOENT: no such file or directory, open '.../dsh-plugin.json
   "facets": { "host": { "entry": "lib/facet.js", "apiVersion": "v1alpha1" } },
   "requires": {
     "contracts": [
-      { "apiVersion": "commands.dsh/v1alpha1", "kind": "Command" }
+      { "apiVersion": "commands.dsh/v1alpha1", "kind": "Command", "optional": true }
     ]
   },
   "permissions": [
