@@ -538,7 +538,9 @@ ReferenceError: next is not defined
 - **第 1–5 项**（正常启动与标题栏/composer 渲染、普通消息流式回复与审批 `y`/`n`、`/help`·`/stats`·`/settings`、`Ctrl+P` Settings 与凭据掩码、`Esc Esc`·`/rewind`）——**未验证**。真人反馈是「没有什么变化」，但如本节开头所记，那次运行加载的是 09-11 的旧构建，不含本分支任何改动，因此这句话对本分支不成立。要验这几项，必须先重打包重装。
 - **第 10 项**（极窄终端下面板宽度钳制，21 列真实边界）——**未验证**；渲染测试的 `[26, 20]` 覆盖了钳制分支，真实 21/22 列的边界未在终端里试过。
 - **第 3 步**（private 复制路径走 OSC 52、未拉起 `powershell.exe`）——**未验证**。
-- **第 1 步与第 4 步**（`npm pack` 装进本地 profile 再卸载）——**未执行**。版本号已 bump 到 `0.1.4-pre.1` 并已重新打包（`dsh-oc-tui-0.1.4-pre.1.tgz`，含 `lib/facet.js`、`lib/bridge.js`、`lib/std/`，`_approvalLines` 出现 3 次，即分支构建），但**还没有装进 `--profile tui`**，也没有做过安装/卸载往返。仓库里原来那个 09-11 的 `dsh-oc-tui-0.1.3.tgz` 已删除，`*.tgz` 本就在 `.gitignore` 里、从未进过仓库。
+- **第 1 步与第 4 步**（打包、装进本地 profile、再卸载）——**第 1 步已完成，第 4 步未执行**。版本号已 bump 到 `0.1.4-pre.1`，已重新打包，并已装进 `--profile tui`（`dsh plugin --profile tui list` 显示 `dsh-oc-tui 0.1.4-pre.1`）。安装后的副本已逐项核对：`lib/facet.js`、`lib/bridge.js`、`lib/std/` 五个文件与 `dsh-plugin.json` 都在包内，`lib/ui.js` 的 `_approvalLines` 出现 3 次，两个清单的版本都是 `0.1.4-pre.1`。**但第 1–5 项的真人冒烟仍未执行**——装对了构建只是让验证成为可能，不等于验证过了。仓库里原来那个 09-11 的 `dsh-oc-tui-0.1.3.tgz` 已删除；`*.tgz` 本就在 `.gitignore` 里、从未进过仓库。
+
+  安装过程中有两个值得记下的坑：其一，`dsh plugin --profile tui add` 会被 pnpm 的 `ERR_PNPM_ADDING_TO_ROOT` 挡住（profile 目录下有 `pnpm-workspace.yaml`），需以 `npm_config_ignore_workspace_root_check=true` 运行；其二，删掉旧 tgz 会让 pnpm 在安装时报 `ENOENT … dsh-oc-tui-0.1.3.tgz`，因为 profile 的 `package.json` 仍指向它——必须先把该依赖指向新包再装。
 - **标准路径独占的三行显示**（审批模态的 Origin / Risk / Details）——**无法在现有形态下验证**，原因有两层且互相独立：其一，这三个字段只可能来自标准协议的 `ApprovalRequest`，而本插件自身的审批来自 harness 的 `approval/request`，其载荷只有 `toolName` 与 `reason`（`lib/index.js:1120` 只映射这两个字段，origin/details/risk 保持 `undefined`），`lib/ui.js:1813` 起也只画实际存在的字段；其二，B 阶段休眠，没有任何标准请求能到达。所以即便按 Step 1 重装了分支构建，正常跑一次也看不到这三行——它们需要一个真正的标准请求方，而这是阶段 B 休眠的直接后果，不是缺陷。
 
 **仍然只能靠真人的部分**（与本次新增覆盖无关）：真实终端仿真器本身的行为（备用屏、raw mode、OSC 52 剪贴板、鼠标跟踪在真实 Windows Terminal / iTerm 下的表现）、真实模型发起工具调用的整条 agent 循环、以及上面第 1–5/10 项与打包往返。本次新增的是**模态内部逻辑**的覆盖：它用真实 cordis 上下文、真实句柄与真实字节驱动，因此能抓住手搓 context 抓不到的契约（例如 waterfall 的 `next` 续延）；但它不替代「一个真人坐在真实终端前」。
