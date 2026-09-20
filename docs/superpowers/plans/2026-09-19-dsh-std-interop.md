@@ -2696,6 +2696,29 @@ git commit -m "feat(tui): add the standalone secret prompt and claim secret-inpu
 
 ---
 
+## 阻断性发现（最终审查，2026-09-20）：v0.15 组件无法暂存任何协议实现
+
+**这是上游缺口，它使 B 阶段在已发布的 adapter 上不可运行。** 已逐层核实：
+
+1. `@dsh-std/lifecycle` 的 `implement` 就是 `stageProtocol`（`lib/index.js:214-231`），它要求 support 已声明：
+   ```js
+   const declared = instance.selected.facet.protocols?.supports ?? []
+   const definition = this.protocols.resolve(support)
+   if (definition === void 0 || !declared.some((row) => this.protocols.resolve(row) === definition))
+     throw new TypeError(`facet attempted to implement undeclared protocol ...`)
+   ```
+2. `@dsh-std/adapter-dsh@0.1.1-rc.3` **使用** `LifecycleCoordinator` 构造 `ActivationContext`（`lib/index.js:1234`），且**没有**自己定义 `implement`——所以交给 facet 的就是上面那个 `stageProtocol`。
+3. adapter 里**没有任何**代码路径给 facet 的投影写入 `protocols.supports`：Community v0.15 路线经 `projectManifest` 只产出 `protocols.requires`；adapter 自己的 facet 构造（`lib/index.js:1678`）同样只设 `requires`。
+4. Community v0.15 清单**无法**声明 supports：`requires.supports` 与顶层 `supports` 都被 schema 以 `unknown field` 拒绝（已实测）。
+
+**后果：** `lib/facet.js` 第一次 `implement()` 就抛 `TypeError`，激活实例转入 `failed`，而 `mountProfileComponents` 一旦抛错会回滚 profile 里**全部**已挂载组件。也就是说，在装了 adapter 的 profile 里本插件不是"不能互操作"，而是**会破坏整个 profile**。
+
+**因此 facet 必须只暂存自己声明过的 support**（`lib/facet.js` 的 `activate` 里加守卫）：声明为空就不暂存、直接返回，并让 `snapshot()` 如实报告原因。这样在上游缺口下也绝不会回滚 profile；而上游一旦能让 v0.15 声明 supports，同一份代码会正常暂存。
+
+**由此，B 阶段的运行时互操作在当前上游版本下不可用。** A 阶段（静态清单与预检）仍然成立，这是本分支可交付的部分。协议 shim（`lib/std/presentation.js`、`lib/std/commands.js`）已写好并被测试覆盖，但处于休眠状态，等上游解决声明问题后即可启用。
+
+---
+
 ## 未完成的设计项（文档审查发现，需后续处理）
 
 这三项在设计里被列为"适配工作"，但代码与文档里都没有，Task 12 的审查逐条查了出来。**它们不是本计划的已完成部分**，列在这里以免丢失。
