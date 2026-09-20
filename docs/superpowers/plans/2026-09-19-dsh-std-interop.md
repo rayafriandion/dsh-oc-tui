@@ -245,9 +245,12 @@ const repoRoot = join(here, "..")
   eq("facet entry", manifest.facets.host.entry, "lib/facet.js")
   eq("facet apiVersion", manifest.facets.host.apiVersion, "v1alpha1")
 
-  // The TUI consumes Command resources (it reads other components' commands).
-  // Presentation and ContributionHost are things the TUI *provides*, and
-  // Community v0.15 has no `supports` field, so they must NOT appear here.
+  // The entry declares a design intent, not a current behaviour: nothing in
+  // lib/ calls protocols.client(...), so the TUI reads no other component's
+  // commands today. It is marked optional because the lifecycle treats an
+  // unsatisfiable NON-optional requirement as a hard activation failure.
+  // Presentation is a thing the TUI *provides*, and Community v0.15 has no
+  // `supports` field, so it must NOT appear here.
   eq("requires.contracts is exactly the Command resource",
     manifest.requires.contracts,
     [{ apiVersion: "commands.dsh/v1alpha1", kind: "Command" }])
