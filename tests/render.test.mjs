@@ -305,6 +305,42 @@ for (const [COLS, ROWS] of [[130, 45], [100, 30], [80, 24], [60, 20], [46, 16]])
     gridDiff(emulatePaint(writes, COLS, ROWS), screen, COLS, ROWS).length === 0)
 }
 
+// The standalone secret prompt is a new painted overlay; like every other
+// overlay it must not strand cells behind it when it opens, updates or closes.
+for (const [COLS, ROWS] of [[80, 24], [60, 20], [120, 40]]) {
+  const { term, writes } = paintCapture(COLS, ROWS)
+  const app = new App({ cols: COLS, rows: ROWS, on() {} })
+  app.setSession({ id: "s", title: "Secret" })
+  let screen = app.render(); term.paint(screen)
+
+  app.pendingSecret = { label: "Provider API key", description: "Paste the key", draft: "", cursor: 0, error: null, settle() {} }
+  screen = app.render(); term.paint(screen)
+  ok(`${COLS}x${ROWS} secret prompt open leaves no residue`,
+    gridDiff(emulatePaint(writes, COLS, ROWS), screen, COLS, ROWS).length === 0)
+
+  app.pendingSecret.draft = "sk-abcdefghijklmnop"
+  screen = app.render(); term.paint(screen)
+  ok(`${COLS}x${ROWS} secret prompt typing leaves no residue`,
+    gridDiff(emulatePaint(writes, COLS, ROWS), screen, COLS, ROWS).length === 0)
+  const rows = screen.cells.map((row) => row.map((c) => c.ch).join(""))
+  // The value is masked: the plaintext must never reach the screen buffer,
+  // where it would be readable by anything that dumps the frame.
+  ok(`${COLS}x${ROWS} secret prompt masks the value`,
+    !rows.some((row) => row.includes("sk-abcdefghijklmnop")))
+  ok(`${COLS}x${ROWS} secret prompt draws the label`,
+    rows.some((row) => row.includes("Provider API key")))
+
+  app.pendingSecret.error = "a value is required"
+  screen = app.render(); term.paint(screen)
+  ok(`${COLS}x${ROWS} secret prompt error leaves no residue`,
+    gridDiff(emulatePaint(writes, COLS, ROWS), screen, COLS, ROWS).length === 0)
+
+  app.pendingSecret = null
+  screen = app.render(); term.paint(screen)
+  ok(`${COLS}x${ROWS} closing the secret prompt leaves no residue`,
+    gridDiff(emulatePaint(writes, COLS, ROWS), screen, COLS, ROWS).length === 0)
+}
+
 console.log("")
 if (failed > 0) { console.log(failed + " render test(s) failed"); process.exit(1) }
 console.log("all render tests passed")

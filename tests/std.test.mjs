@@ -427,9 +427,37 @@ const PARTICIPANT = "test/dsh-oc-tui"
   ok("does not claim ExternalRedirect", byKind.ExternalRedirect === undefined)
 
   eq("user interaction operations", byKind.UserInteraction.protocol.spec.operations,
-    ["question", "approval"])
+    ["question", "approval", "secret-input"])
   eq("presentationOperations matches the published support",
-    presentationOperations(), ["question", "approval"])
+    presentationOperations(), ["question", "approval", "secret-input"])
+
+  // The declared operations and the handlers must not drift apart: a kind that
+  // is declared but not served is only discovered when a consumer calls it.
+  // The factory rejects a kind outside spec.operations, so this pins both sides.
+  {
+    const impls = createPresentationImplementations(PARTICIPANT)
+    const ui = impls.find((i) => i.protocol.kind === "UserInteraction")
+    const served = []
+    const release = registerLiveTui({
+      async interact(request) { served.push(request.kind); return { status: "cancelled" } },
+    })
+    for (const kind of presentationOperations()) {
+      const request = kind === "approval"
+        ? { kind, requestId: "r", invocationId: "i", origin: "t", action: "a", summary: "s" }
+        : kind === "question"
+          ? { kind, requestId: "r", invocationId: "i", origin: "t", fields: [{ id: "f", label: "F", kind: "text" }] }
+          : { kind, requestId: "r", invocationId: "i", origin: "t", label: "L" }
+      await ui.handle("interact", request, {})
+    }
+    eq("every declared operation reaches the handler", served, presentationOperations())
+
+    let undeclaredThrew = false
+    try {
+      await ui.handle("interact", { kind: "open-external", requestId: "r", invocationId: "i", origin: "t" }, {})
+    } catch { undeclaredThrew = true }
+    ok("a kind outside the declared operations is rejected", undeclaredThrew)
+    release()
+  }
 
   // With no live TUI every call must report unavailable — never a decision.
   const approval = await byKind.UserInteraction.handle("interact", {
@@ -724,6 +752,26 @@ const PARTICIPANT = "test/dsh-oc-tui"
   eq("the runtime is on the commands coordinate", runtime.support.apiVersion, "commands.dsh/v1alpha1")
   ok("the runtime exposes a handle function",
     typeof runtime.implementation.handle === "function")
+}
+
+// ---- secret input ----
+{
+  const handle = {
+    async interact(request) {
+      if (request.kind !== "secret-input") return { status: "unavailable" }
+      // Echoes what the modal would return, so the shim's mapping is what is
+      // under test here rather than the terminal.
+      return { status: "submitted", value: { secret: "s3cr3t" } }
+    },
+  }
+  const ui = createPresentationHandlers().userInteraction
+  const release = registerLiveTui(handle)
+  eq("secret input is forwarded to the live TUI",
+    await ui.interact({ kind: "secret-input", label: "API key" }),
+    { status: "submitted", value: { secret: "s3cr3t" } })
+  release()
+  eq("secret input with no live TUI is unavailable",
+    (await ui.interact({ kind: "secret-input", label: "API key" })).status, "unavailable")
 }
 
 console.log("")
