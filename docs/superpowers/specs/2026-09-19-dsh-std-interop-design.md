@@ -310,13 +310,12 @@ liveTui() -> handle | null
 - **`id` 用 `io.github.rayafriandion.dsh-oc-tui`**：命名空间派生自用户实际控制的 GitHub
   owner，比自造的 `dev.*` 更可辩护。
 - **`requires.contracts` 只有 `commands.dsh/v1alpha1 Command`，且标 `optional: true`**：
-  TUI **被设计为**消费 `Command` 资源（宿主把命令面接进来时，TUI 的命令行是这些贡献的
-  落点），但**当前没有任何代码读别人贡献的命令**——`lib/` 里没有 `protocols.client(...)`
-  调用，命令解析走 cordis 的 `ctx.commands`。非 optional 且无人提供的 requirement 会被
-  lifecycle 当作**硬激活失败**（`facet … requirements are unavailable`），所以这条必须
-  是 optional。Presentation 与 ContributionHost 是 TUI **提供**的，
-  而 v0.15 清单**没有 `supports` 字段**，support 只能运行时由 `implement()` 产生。
-  多写会变成虚假声明。
+  这条是**留给将来消费方的入口，今天完全惰性**——`lib/` 里没有 `protocols.client(...)`
+  调用，命令解析走 cordis 的 `ctx.commands`，所以有没有 Command 提供方行为都一样。非
+  optional 且无人提供的 requirement 会被 lifecycle 当作**硬激活失败**
+  （`facet … requirements are unavailable`），所以这条必须是 optional。Presentation 与
+  ContributionHost 是 TUI **提供**的，而 v0.15 清单**没有 `supports` 字段**，support
+  只能运行时由 `implement()` 产生。多写会变成虚假声明。
 - **命令走 `x-dev.dsh-std.extensions` 富路径，不走 `contributes.commands`**：实测简单
   路径的投影只有 `{title}`，**不保留 `placements` 和 `aliases`**；而 `placements` 正是
   TUI 用来把自己命令限定在终端命令行的机制（省略 `placements` 意味着"所有命令面都发布"，

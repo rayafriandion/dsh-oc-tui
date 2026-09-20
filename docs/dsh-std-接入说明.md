@@ -41,7 +41,7 @@ dsh-oc-tui **不是协议消费方**，而是生态里**设计为提供方（pro
 | `presentation.dsh/v1alpha1` `Notification` | **提供（当前休眠）** | 无 spec 常量 support |
 | `presentation.dsh/v1alpha1` `CopyText` | **提供（当前休眠）** | 无 spec 常量 support |
 | `commands.dsh/v1alpha1` `CommandRuntime` | **提供（当前休眠）** | `catalog` / `execute`，只服务 `tui.dsh/v1alpha1 CommandLine` 这一个 placement |
-| `commands.dsh/v1alpha1` `Command` | **设计为消费（`optional`，当前未消费）** | TUI **被设计为**消费别人贡献的命令（见 §3.2），但**当前不读它们**：`lib/` 里没有任何 `protocols.client(...)` 调用。清单里这是 `requires.contracts` 唯一的一条，且标了 `optional: true`——没有 Command 提供方时 TUI 照常工作 |
+| `commands.dsh/v1alpha1` `Command` | **留给将来的消费方（`optional`，当前未消费）** | 清单把这条依赖保留给**将来的消费方**（见 §3.2），但**今天没有任何代码读它**：`lib/` 里没有任何 `protocols.client(...)` 调用。清单里这是 `requires.contracts` 唯一的一条，且标了 `optional: true`——没有 Command 提供方时 TUI 照常工作 |
 
 上表的「提供」描述的是**代码具备的能力**，不是当前的运行时状态：这些 support 只有在 facet 自己的投影声明了它们之后才会被暂存（`context.protocols.implement(...)`，见 §6），而 Community v0.15 清单无法声明 supports——**当前实际暂存 0 条**。详见开头的[阻断性发现](#阻断性发现本插件当前不发布任何协议-support)。`OpenExternal`、`ExternalRedirect` 不提供（见 §7）。
 
@@ -115,15 +115,15 @@ TUI 会抢占终端：设置 stdin raw mode、备用屏、鼠标跟踪，并启�
 | `contributes` | `x-dev.dsh-std.extensions` 下的 9 条 Command | 见 §3.3 |
 | `overrides` | 一条 `{ target: "@deepseek-ai/dsh-base", kind: "patch" }` | `target` 是**被 patch 的宿主层**，不是本插件的仓库地址：`cordis.patch.yml` 的四行是在 `@deepseek-ai/dsh-base` 之上追加的 |
 
-投影结果（`projectManifest`）：facet 的激活坐标是 `lifecycle.dsh/v1alpha1` / `FacetModule`，`spec.module` 为 `lib/facet.js`；`requires.contracts` 变成该 facet 的 `spec.protocols.requires`，`optional` 原样保留（`tests/std.test.mjs` 在投影上断言这一点，而不是在原始 JSON 上）。
+投影结果（`projectManifest`）：facet 的激活坐标是 `lifecycle.dsh/v1alpha1` / `FacetModule`，`spec.module` 为 `lib/facet.js`；`requires.contracts` 变成该 facet 的 `spec.protocols.requires`，`optional` 原样保留（`tests/std.test.mjs` 在**原始 JSON**（`:95-97`）与**投影**（`:109-111`）上都断言了这一点）。
 
 ### 3.2 为什么 `requires.contracts` 只有 `Command`，而且标了 `optional`
 
-这一条声明的不是「当前正在消费」，而是**设计意图**：TUI 被设计为消费 `commands.dsh/v1alpha1 Command` 资源——当宿主把命令面接进来时，TUI 的命令行是这些贡献的落点。
+这一条声明的不是「当前正在消费」，而是**留给将来消费方的入口**：它今天完全惰性——`lib/` 里没有任何代码读 `commands.dsh/v1alpha1 Command`，也没有任何行为依赖它。
 
 **但当前它不读别人贡献的命令。** `lib/` 里没有任何 `protocols.client({ apiVersion: 'commands.dsh/v1alpha1', kind: 'Command' })` 调用：TUI 的命令解析走 cordis 的 `ctx.commands` 服务（harness 自己的注册表），`lib/std/commands.js` 发布的 `CommandRuntime` 是**提供**方向（别人来驱动 TUI），不是消费方向。设计 §6.2 也说明，std 的 `Command` 扩展只有在某个产品 UI 注册了 `DshCommandSurfaceProvider` 时才会被 surface 回来，而本插件没有注册。
 
-因此这一条必须带 `"optional": true`。lifecycle 对**非 optional** 且无人提供的 requirement 是**硬激活失败**（`facet … requirements are unavailable`），不是警告——而 TUI 没有任何 Command 提供方也能正常工作，「必需」就是虚假声明。标成 optional 后语义才诚实：**有** Command 提供方时 TUI 按设计消费它，**没有**时照常启动。
+因此这一条必须带 `"optional": true`。lifecycle 对**非 optional** 且无人提供的 requirement 是**硬激活失败**（`facet … requirements are unavailable`），不是警告——而 TUI 没有任何 Command 提供方也能正常工作，「必需」就是虚假声明。标成 optional 后语义才诚实：**有** Command 提供方时 TUI 的行为与**没有**时完全相同——两者都不读贡献的命令；`optional` 保证的只是「没有提供方时不硬失败」，而不是「有提供方时会消费」。
 
 **为什么清单里没有 Presentation 的条目：** Presentation 是 TUI **提供**的（ContributionHost **不在其中**：本插件不注册贡献宿主，`@dsh-std/ui` 也没有可供 facet 使用的实现工厂，见 §7.2）。而 Community v0.15 的清单**没有 `supports` 字段**——静态清单只能声明 `requires`，不能声明 support。support 只能运行时通过 `context.protocols.implement(...)` 产生，**而运行时这条路当前也是关的**：`implement()` 只接受 facet 投影里已声明的 support，清单既不能声明，投影里自然没有（见开头的阻断性发现）。把提供的协议写进 `requires.contracts` 会变成**虚假声明**：那是在说「我需要别人提供它」，与事实相反。
 
