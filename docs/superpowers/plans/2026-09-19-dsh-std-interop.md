@@ -2699,6 +2699,31 @@ git commit -m "feat(tui): add the standalone secret prompt and claim secret-inpu
 
 ---
 
+## 协议正文已取回：I4 是 MUST 违反，并另发现一处 ANSI 注入（2026-09-20）
+
+网络恢复后重新克隆了 `dsh-std`，`docs/proposals/presentation.zh.md` 已可读。**此前标注"引文无法核实"的那条，现在核实了**：
+
+> 第 359 行：**Provider 必须清楚显示 action、summary、origin 和经 policy 允许的 details。Consumer 不能把 shell escape、ANSI control sequence 或 HTML 注入解释为可信 UI markup。**
+
+### I4 确认为 MUST 违反
+
+我们的审批模态只画了 `'Approval · ' + toolName + ' · y allow / n deny'`：`action` 显示了（作为 toolName），但 **`summary` 只存不画**（既存问题）、**`origin` 不画**、**`details` 全部丢弃**、**`risk` 不画**。四项里三项违反 MUST。
+
+修法：`_paintApproval` 必须显示 `action`、`summary`、`origin`、`risk`，以及 `details[]` 的 `label` 与 `value`。对 `sensitivity: 'private'` 的 detail，**显示 label 但不显示 value**——第 185 行对 `CopyText.sensitivity` 的语义是「`private` 提醒 Provider 采用不写日志、**不显示全文**的处理」，`ApprovalDetail.sensitivity` 同理；我们没有 policy 层，所以保守默认是隐藏值。这一点要在文档里写明是"无 policy 层下的保守默认"，不是协议规定。
+
+### 新发现：ANSI 注入是真实的，且第 359 行后半句正是禁止它
+
+`Screen.set` 原样存储字符（`lib/term.js`），`term.paint` 把 `cell.ch` 逐个写进输出流。已复现：`screen.text(0, 0, 'x\x1b[2J\x1b[Hcleared')` 之后单元缓冲里**存着裸 ESC**，会被原样发给终端。因此一个组件发 `action: "x\x1b[2J\x1b[H"` 就能让 TUI 发出清屏序列（更糟的序列同理）。
+
+**这是新引入的攻击面**：harness 自有的审批路径（`approval/request`）同样画 `req.toolName`，所以"恶意工具名"是既存问题；但标准路径**新增了一个来源**——另一个组件通过协议送来的文本，而协议正文点名要求不得把它当 markup。
+
+**修法选咽喉点**：在 `Screen.set` 里把控制字符（C0 `\x00-\x1f`、`\x7f`，以及 C1 `\x80-\x9f`）替换为可见占位符，保留宽字符续接用的 `''` 标记。理由与安全性都已核实：
+- 没有任何代码故意通过 `screen.text`/`set` 绘制控制字符（已 grep 确认）；`lib/markdown.js` 自己按 `\n` 分行，所以换行从不进入 `screen.text`。
+- 调用点大量绘制不受信内容（`chars[i]`、`this.title`、`path`、`branch`、`cwd`、`command`、`description`、`line.slice(...)`、`match[0]`……），所以一处修复覆盖整棵渲染树，包括转录区、工具输出、markdown 与路径——比逐个调用点消毒强得多。
+- 用**可见占位符**而非丢弃：丢弃会改变宽度与布局，占位符让注入变得可见。
+
+---
+
 ## 最终审查的 Important 项（收尾工作，2026-09-20）
 
 三项，按重要性排序。它们不在原来的 13 个 task 里——是最终全分支审查发现的。
