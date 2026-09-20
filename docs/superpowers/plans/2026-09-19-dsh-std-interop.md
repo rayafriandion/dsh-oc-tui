@@ -1224,6 +1224,27 @@ const PARTICIPANT = "test/dsh-oc-tui"
   ok("an undeclared operation is rejected", threw)
 }
 
+// ---- adapt: the secret prompt enforces the request's bounds ----
+// validateSecretInputValue rejects a submitted secret outside minLength /
+// maxLength, and that throw happens inside the factory's handle, so it is a
+// capability failure rather than a re-prompt. The bounds therefore have to
+// reach the modal, and the modal has to refuse an out-of-range value.
+{
+  const seen = []
+  const release = registerLiveTui({
+    async interact(request) {
+      seen.push(request)
+      return { status: "cancelled" }
+    },
+  })
+  const ui = createPresentationHandlers().userInteraction
+  await ui.interact(
+    { kind: "secret-input", label: "Key", minLength: 8, maxLength: 64 }, {})
+  eq("the secret request's bounds reach the live TUI unchanged",
+    seen[0], { kind: "secret-input", label: "Key", minLength: 8, maxLength: 64 })
+  release()
+}
+
 // ---- presentation shim with a live TUI (late binding) ----
 {
   const calls = []
@@ -2481,12 +2502,18 @@ Expected: FAIL — `this._paintSecret is not a function`（Step 3 只加了状�
   // Wait on the standalone secret prompt. `secret-input` is the one
   // Presentation operation with no existing modal: the Settings pages mask a
   // credential inline, but there was no way to ask for a secret on its own.
-  function waitForSecret({ label, description, signal }) {
+  // `minLength` / `maxLength` come from the request and MUST be enforced here:
+  // the protocol's validateSecretInputValue rejects a submitted secret outside
+  // them, and a throw inside the factory's handle is a capability failure rather
+  // than a clean re-prompt.
+  function waitForSecret({ label, description, minLength, maxLength, signal }) {
     return new Promise((resolve, reject) => {
       let settled = false
       const state = {
         label: String(label),
         description: description === undefined ? undefined : String(description),
+        minLength,
+        maxLength,
         draft: '',
         cursor: 0,
         error: null,
@@ -2529,6 +2556,8 @@ Expected: FAIL — `this._paintSecret is not a function`（Step 3 只加了状�
           const value = await waitForSecret({
             label: request.label,
             description: request.description,
+            minLength: request.minLength,
+            maxLength: request.maxLength,
             signal,
           })
           if (value === null) return { status: 'cancelled' }
@@ -2549,8 +2578,22 @@ Expected: FAIL — `this._paintSecret is not a function`（Step 3 只加了状�
       }
       if (key.name === 'return') {
         const state = app.pendingSecret
-        if (state.draft.length === 0) {
+        // Count code points, not UTF-16 units: the protocol's bound is on
+        // string length and a CJK or emoji secret would otherwise be measured
+        // differently here than by the validator.
+        const length = Array.from(state.draft).length
+        if (length === 0) {
           state.error = 'a value is required'
+          paint()
+          return
+        }
+        if (state.minLength !== undefined && length < state.minLength) {
+          state.error = 'at least ' + state.minLength + ' characters'
+          paint()
+          return
+        }
+        if (state.maxLength !== undefined && length > state.maxLength) {
+          state.error = 'at most ' + state.maxLength + ' characters'
           paint()
           return
         }
