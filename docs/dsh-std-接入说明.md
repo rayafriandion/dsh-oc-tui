@@ -107,7 +107,7 @@ TUI 会抢占终端：设置 stdin raw mode、备用屏、鼠标跟踪，并启�
 | `$schema` | 指向上游 `dsh-plugin-0.15.schema.json` 的绝对 URI | 加载器**不抓取**它，只作为编辑期提示 |
 | `manifestVersion` | `"0.15"`（字符串） | Community 清单版本；schema 文件即 `dsh-plugin-0.15.schema.json` |
 | `id` | `io.github.rayafriandion.dsh-oc-tui` | 必须匹配 `^[a-z][a-z0-9]*(?:[.-][a-z0-9][a-z0-9-]*)+$`；命名空间派生自实际控制的 GitHub owner |
-| `name` / `version` / `license` | `dsh-oc-tui` / `0.1.3` / `LGPL-3.0-or-later` | `version` 与 `license` 必须与 `package.json` 一致，测试会交叉校验 |
+| `name` / `version` / `license` | `dsh-oc-tui` / `0.1.4-pre.1` / `LGPL-3.0-or-later` | `version` 与 `license` 必须与 `package.json` 一致，测试会交叉校验 |
 | `source.repository` | 仓库地址 | 仅元数据 |
 | `facets` | 只有 `host` 一个键 | `facets` 是 `additionalProperties: false`，`entry` 与 `apiVersion` 必填；`apiVersion` 必须**精确等于** `v1alpha1`（adapter 是精确匹配，不是 semver） |
 | `requires.contracts` | 一条 `commands.dsh/v1alpha1 Command`，`optional: true` | 见 §3.2 |
@@ -538,7 +538,7 @@ ReferenceError: next is not defined
 - **第 1–5 项**（正常启动与标题栏/composer 渲染、普通消息流式回复与审批 `y`/`n`、`/help`·`/stats`·`/settings`、`Ctrl+P` Settings 与凭据掩码、`Esc Esc`·`/rewind`）——**未验证**。真人反馈是「没有什么变化」，但如本节开头所记，那次运行加载的是 09-11 的旧构建，不含本分支任何改动，因此这句话对本分支不成立。要验这几项，必须先重打包重装。
 - **第 10 项**（极窄终端下面板宽度钳制，21 列真实边界）——**未验证**；渲染测试的 `[26, 20]` 覆盖了钳制分支，真实 21/22 列的边界未在终端里试过。
 - **第 3 步**（private 复制路径走 OSC 52、未拉起 `powershell.exe`）——**未验证**。
-- **第 1 步与第 4 步**（`npm pack` 装进本地 profile 再卸载）——**未执行**；仓库里的 `dsh-oc-tui-0.1.3.tgz` 是 09-11 的既有产物，未重新打包，也未对 `--profile tui` 做过安装/卸载往返。
+- **第 1 步与第 4 步**（`npm pack` 装进本地 profile 再卸载）——**未执行**。版本号已 bump 到 `0.1.4-pre.1` 并已重新打包（`dsh-oc-tui-0.1.4-pre.1.tgz`，含 `lib/facet.js`、`lib/bridge.js`、`lib/std/`，`_approvalLines` 出现 3 次，即分支构建），但**还没有装进 `--profile tui`**，也没有做过安装/卸载往返。仓库里原来那个 09-11 的 `dsh-oc-tui-0.1.3.tgz` 已删除，`*.tgz` 本就在 `.gitignore` 里、从未进过仓库。
 - **标准路径独占的三行显示**（审批模态的 Origin / Risk / Details）——**无法在现有形态下验证**，原因有两层且互相独立：其一，这三个字段只可能来自标准协议的 `ApprovalRequest`，而本插件自身的审批来自 harness 的 `approval/request`，其载荷只有 `toolName` 与 `reason`（`lib/index.js:1120` 只映射这两个字段，origin/details/risk 保持 `undefined`），`lib/ui.js:1813` 起也只画实际存在的字段；其二，B 阶段休眠，没有任何标准请求能到达。所以即便按 Step 1 重装了分支构建，正常跑一次也看不到这三行——它们需要一个真正的标准请求方，而这是阶段 B 休眠的直接后果，不是缺陷。
 
 **仍然只能靠真人的部分**（与本次新增覆盖无关）：真实终端仿真器本身的行为（备用屏、raw mode、OSC 52 剪贴板、鼠标跟踪在真实 Windows Terminal / iTerm 下的表现）、真实模型发起工具调用的整条 agent 循环、以及上面第 1–5/10 项与打包往返。本次新增的是**模态内部逻辑**的覆盖：它用真实 cordis 上下文、真实句柄与真实字节驱动，因此能抓住手搓 context 抓不到的契约（例如 waterfall 的 `next` 续延）；但它不替代「一个真人坐在真实终端前」。
