@@ -307,7 +307,11 @@ for (const [COLS, ROWS] of [[130, 45], [100, 30], [80, 24], [60, 20], [46, 16]])
 
 // The standalone secret prompt is a new painted overlay; like every other
 // overlay it must not strand cells behind it when it opens, updates or closes.
-for (const [COLS, ROWS] of [[80, 24], [60, 20], [120, 40], [40, 24]]) {
+// 26 columns is the smallest size where the panel still fits: the width floor
+// is 20 and a centred x needs the remaining columns, so the clamp branch is
+// reachable here and not at 40. Below ~21 columns the panel is clipped and only
+// a human can judge it.
+for (const [COLS, ROWS] of [[80, 24], [60, 20], [120, 40], [40, 24], [26, 20]]) {
   const { term, writes } = paintCapture(COLS, ROWS)
   const app = new App({ cols: COLS, rows: ROWS, on() {} })
   app.setSession({ id: "s", title: "Secret" })
