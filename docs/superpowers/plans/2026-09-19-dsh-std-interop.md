@@ -2601,7 +2601,11 @@ Expected: FAIL — `this._paintSecret is not a function`（Step 3 只加了状�
         return
       }
       if (key.name === 'backspace') {
-        app.pendingSecret.draft = app.pendingSecret.draft.slice(0, -1)
+        // Delete a whole code point, not a UTF-16 unit: backspacing over an
+        // astral character (an emoji) with slice(0, -1) would leave a lone
+        // surrogate, which masks as one bullet and counts as one code point
+        // while being an invalid string.
+        app.pendingSecret.draft = Array.from(app.pendingSecret.draft).slice(0, -1).join('')
         paint()
         return
       }
