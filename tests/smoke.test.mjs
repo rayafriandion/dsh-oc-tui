@@ -1404,6 +1404,45 @@ function gridDiff(grid, screen, cols, rows) {
   return bad
 }
 
+// ---- control characters never reach the output stream ---------------------
+// paint() emits each cell's character verbatim, so a C0/C1 byte in text that
+// came from another component — a tool name, a path, a title, a markdown run —
+// would be interpreted by the terminal as a control sequence (screen clear,
+// cursor move, clipboard write). The protocol forbids treating such text as
+// trusted markup, so Screen.set replaces control characters at the one
+// chokepoint every painted string goes through.
+{
+  const injected = "x\x1b[2J\x1b[Hcleared"
+  const s = new Screen(24, 3)
+  s.text(0, 0, injected)
+  eq("control characters are replaced in the cell buffer",
+    s.cells[0].map((c) => c.ch).join("").trimEnd(), "x\uFFFD[2J\uFFFD[Hcleared")
+  ok("no raw escape survives in the buffer",
+    s.cells[0].every((c) => !/[\u0000-\u001f\u007f-\u009f]/.test(c.ch)))
+  // The whole C0/C1 range plus DEL, not just ESC: BEL alone can ring or, in an
+  // OSC terminator, truncate a sequence.
+  const c1 = new Screen(8, 1)
+  c1.text(0, 0, "a\u009bb\u007fc\u0007d")
+  eq("C1, DEL and BEL are replaced too",
+    c1.cells[0].slice(0, 7).map((c) => c.ch), ["a", "\uFFFD", "b", "\uFFFD", "c", "\uFFFD", "d"])
+  // A wide rune's continuation cell is the empty-string marker, not a control
+  // character; it must pass through untouched or wide runes lose a column.
+  const wide = new Screen(6, 1)
+  wide.text(0, 0, "中文")
+  eq("the wide-rune continuation marker survives",
+    wide.cells[0].slice(0, 4).map((c) => c.ch), ["中", "", "文", ""])
+  // The assertion this block exists for: after painting, the emitted stream
+  // carries no escape that came from the text.
+  const { term, writes } = paintCapture(24, 3)
+  const frame = new Screen(24, 3)
+  frame.text(0, 0, injected)
+  term.paint(frame)
+  const stream = writes.join("")
+  ok("no clear-screen sequence reaches the terminal", !stream.includes("\x1b[2J"))
+  ok("no escape from the text reaches the terminal", !stream.includes("\x1b[Hcleared"))
+  ok("the injected rune is visible instead", stream.includes("\uFFFD"))
+}
+
 // A wide rune whose continuation cell was overwritten in the next frame must be
 // repainted as a space, or its right half survives beside the new text.
 {
