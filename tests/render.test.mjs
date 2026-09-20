@@ -307,7 +307,7 @@ for (const [COLS, ROWS] of [[130, 45], [100, 30], [80, 24], [60, 20], [46, 16]])
 
 // The standalone secret prompt is a new painted overlay; like every other
 // overlay it must not strand cells behind it when it opens, updates or closes.
-for (const [COLS, ROWS] of [[80, 24], [60, 20], [120, 40]]) {
+for (const [COLS, ROWS] of [[80, 24], [60, 20], [120, 40], [40, 24]]) {
   const { term, writes } = paintCapture(COLS, ROWS)
   const app = new App({ cols: COLS, rows: ROWS, on() {} })
   app.setSession({ id: "s", title: "Secret" })
@@ -334,6 +334,11 @@ for (const [COLS, ROWS] of [[80, 24], [60, 20], [120, 40]]) {
   screen = app.render(); term.paint(screen)
   ok(`${COLS}x${ROWS} secret prompt error leaves no residue`,
     gridDiff(emulatePaint(writes, COLS, ROWS), screen, COLS, ROWS).length === 0)
+  // Re-assert the mask in the error state: an implementation that echoed the
+  // draft on the error line would otherwise pass every assertion in this block.
+  ok(`${COLS}x${ROWS} secret prompt still masks the value in the error state`,
+    !screen.cells.map((row) => row.map((c) => c.ch).join(""))
+      .some((row) => row.includes("sk-abcdefghijklmnop")))
 
   app.pendingSecret = null
   screen = app.render(); term.paint(screen)
