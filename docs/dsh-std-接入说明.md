@@ -313,7 +313,7 @@ Session、Storage、Tool、Model、Skill、Workspace、Messages、Permission、E
 
 以下 §9.1–§9.7 每条都是**刻意的**，并且经过代码评审确认。不了解它们的人会把它们读成 bug。
 
-**§9.8 是例外**：那里列的是开放缺口——一项上游阻断加三项尚未完成的设计项——不是既定行为，不应被当作已支持的能力。
+**§9.8 是例外**：那里列的是开放缺口——一项上游阻断加四项尚未完成的设计项——不是既定行为，不应被当作已支持的能力。
 
 **还有一处范围提示**：§9.1–§9.5 描述的是 `lib/std/adapt.js` 与 std 协议 handler（`interact` / `commandRuntime`）上的行为，而那条路径在当前上游下是休眠的（见开头的阻断性发现）。它们描述的是**代码行为**，目前不是用户可见的行为。§9.6 的 `TUI_OWNED_COMMANDS` 与 §9.7 的 Esc 委托走的是 TUI 自己的路径，不受影响。
 
@@ -368,7 +368,7 @@ Session、Storage、Tool、Model、Skill、Workspace、Messages、Permission、E
 
 ### 9.8 开放缺口（不是既定行为）
 
-以下各项都不是既定行为，不应被当作已支持的能力：第一项是**上游阻断**，其余三项在设计的适配清单里、但**代码和文档都没有做**。列在这里是为了让它们可见，不是为了给它们一个「已知行为」的名分。
+以下各项都不是既定行为，不应被当作已支持的能力：第一项是**上游阻断**，其余四项是设计里要求过、但**代码（或测试）没有做**的部分。列在这里是为了让它们可见，不是为了给它们一个「已知行为」的名分。
 
 #### 9.8.1 本插件当前不发布任何协议 support（上游阻断，最重要的一项）
 
@@ -386,7 +386,17 @@ Community v0.15 清单无法声明 protocol supports，而 `@dsh-std/lifecycle` 
 
 请求里带 `deadline` 字段，但**没有任何代码读它**；中止（abort）一律映射为 `cancelled`。后果是消费方设置的截止时间不被遵守，模态会无限期等待，而协议里 `expired` 这个状态在本插件里不可达。
 
-#### 9.8.4 `lib/bridge.js` 的两种加载顺序只测了一种
+#### 9.8.4 通知的 `deduplicationKey` 被忽略，重复通知不会合并
+
+标准 `NotificationRequest` 带一个可选的 `deduplicationKey`，声明为 `readonly deduplicationKey?: string`（`node_modules/@dsh-std/presentation/lib/index.d.ts:57`），校验器只要求它是**非空字符串**（`node_modules/@dsh-std/presentation/lib/index.js:174`）。已发布产物里没有对这个字段作用的散文定义，但从字段名与设计自己的表述可以确定它的意图：它是消费方给通知贴的去重标识——携带同一个键的通知是**同一条**通知，提供方应把它们合并显示，而不是逐条投递。设计 §6.1 的适配清单把它列为需要新增的工作：「`deduplicationKey` 需要新增去重」（`docs/superpowers/specs/2026-09-19-dsh-std-interop-design.md:385`）。
+
+`lib/index.js` 的 `notify` 只读 `request.text` 与 `request.level`，`deduplicationKey` **没有被读取，也没有任何去重逻辑**：每次调用都直接 `app.showToast(...)`（`lib/index.js:2984`），而 `showToast`（`lib/ui.js:1055`）只是把 `this.toast` 换成最新的一条，不保存键，也不看时间窗。
+
+后果：消费方要求合并为一条的两条通知会被**分别投递**，去重完全不发生。注意 toast 是单槽位、后来的覆盖先前的，所以紧挨着的两条相同通知在屏幕上看起来仍是一条；但去重并没有发生——若两条之间夹了别的 toast，重复的那条会再次出现。**这一项尚未实现**，而且它不是一次字段映射就能补齐的：实现去重需要给 `showToast` 增加「键 + 时间窗」的状态，是新行为，不是适配。
+
+与 §9.8.2 / §9.8.3 一样，这处在 Phase B 的休眠路径上（见开头的[阻断性发现](#阻断性发现本插件当前不发布任何协议-support)），所以它不是今天用户可见的缺陷；它是上游放开 support 声明之后**必须补上**的工作，记在这里是为了不让它再一次无声地漏掉。
+
+#### 9.8.5 `lib/bridge.js` 的两种加载顺序只测了一种
 
 见 §4.1：已测的是「先创建 handler / 工厂，再注册句柄，再调用」；**「先注册句柄、再创建 handler / 工厂」没有测试**。前者足以抓住早绑定，所以这个缺口是覆盖完整性问题，不是已知缺陷。
 
