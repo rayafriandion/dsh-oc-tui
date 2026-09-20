@@ -313,7 +313,7 @@ Session、Storage、Tool、Model、Skill、Workspace、Messages、Permission、E
 
 以下 §9.1–§9.7 每条都是**刻意的**，并且经过代码评审确认。不了解它们的人会把它们读成 bug。
 
-**§9.8 是例外**：那里列的是开放缺口——一项上游阻断加五项尚未完成的设计项——不是既定行为，不应被当作已支持的能力。
+**§9.8 是例外**：那里列的是开放缺口——一项上游阻断、两项已修复并关闭的历史缺口（保留编号以便追溯），以及三项尚未完成的设计项——不是既定行为，不应被当作已支持的能力。
 
 **还有一处范围提示**：§9.1–§9.5 描述的是 `lib/std/adapt.js` 与 std 协议 handler（`interact` / `commandRuntime`）上的行为，而那条路径在当前上游下是休眠的（见开头的阻断性发现）。它们描述的是**代码行为**，目前不是用户可见的行为。§9.6 的 `TUI_OWNED_COMMANDS` 与 §9.7 的 Esc 委托走的是 TUI 自己的路径，不受影响。
 
@@ -368,7 +368,7 @@ Session、Storage、Tool、Model、Skill、Workspace、Messages、Permission、E
 
 ### 9.8 开放缺口（不是既定行为）
 
-以下各项都不是既定行为，不应被当作已支持的能力：9.8.1 是**上游阻断**，9.8.2 与 9.8.3 已在收尾工作中**修复**（保留编号以便追溯，正文如实记录修法），9.8.4 与 9.8.5 仍是**代码（或测试）没有做**的部分。列在这里是为了让它们可见，不是为了给它们一个「已知行为」的名分。
+以下各项都不是既定行为，不应被当作已支持的能力：9.8.1 是**上游阻断**；9.8.2 与 9.8.3 已在收尾工作中**修复并关闭**（保留编号以便追溯，正文如实记录修法）；9.8.4、9.8.5 与 9.8.6 仍是**代码（或测试）没有做**的部分。列在这里是为了让它们可见，不是为了给它们一个「已知行为」的名分。
 
 #### 9.8.1 本插件当前不发布任何协议 support（上游阻断，最重要的一项）
 
@@ -376,13 +376,15 @@ Community v0.15 清单无法声明 protocol supports，而 `@dsh-std/lifecycle` 
 
 #### 9.8.2 授权提示丢弃了 `origin`、`details` 与 `risk`（**已修复**）
 
-**修复前：** 标准路径只把 `request.action` 映射为 `toolName`、`request.summary` 映射为 `reason`（`lib/index.js` 的 `interact` 审批分支），而审批提示只画 `Approval · <toolName> · y allow / n deny`——`summary` 存而不画，`origin`、`details`、`risk` 三个字段根本没有被读取。协议正文（`docs/proposals/presentation.zh.md:359`）要求「Provider 必须清楚显示 action、summary、origin 和经 policy 允许的 details」，因此这是对 MUST 的违反。
+**修复前：** 标准路径只把 `request.action` 映射为 `toolName`、`request.summary` 映射为 `reason`（`lib/index.js` 的 `interact` 审批分支），而审批提示只画 `Approval · <toolName> · y allow / n deny`——`summary` 存而不画，`origin`、`details`、`risk` 三个字段根本没有被读取。协议正文要求「Provider 必须清楚显示 action、summary、origin 和经 policy 允许的 details」，因此这是对 MUST 的违反。
+
+**这条引用已重新核对（2026-09-20）。** `dsh-std` 的 `docs/proposals/presentation.zh.md:359` 原文即上述句子，MUST **确认成立**——早先「上游 clone 不完整、网络不可达、无法复核」的保留说法已作废，此处不再留 hedge。审批提示现在按该条显示 `action`、`summary`、`origin`、`risk` 与 `details`；`details` 中标记 `sensitivity: 'private'` 的项显示其 label、值以掩码代替（见下）。
 
 **修复后：** `lib/index.js` 的 `awaitApproval` 状态携带 `toolName`（action）、`summary`、`origin`、`details`、`risk`；标准路径逐一映射，harness 路径（`askApproval`）只有 `req.toolName` 与 `req.reason`，后者按同义映射到 `summary`，`origin` / `details` / `risk` 保持 `undefined`——不编造值。`lib/ui.js` 新增 `_approvalLines(width, maxRows)`，把 action、summary、origin、risk、每个 detail 的 `label: value` 渲染成 composer 内容行；`risk` 按 `low`/`medium`/`high` 取 `success`/`warning`/`error` 色调，与其它行视觉上可区分。composer 的高度由同一个 helper 计算（`_layout` 与绘制共用），所以内容与边框不会各说各话；内容超出行数时保留 action 与按键提示，中间部分截断并显示 `… N more`。
 
-**`sensitivity: 'private'` 的 detail：显示 label，值以固定宽度的 `••••••` 代替。** 这是**无 policy 层下的保守默认，不是协议规定**。依据是第 185 行对 `CopyText.sensitivity` 的语义——「`private` 提醒 Provider 采用不写日志、不显示全文的处理，但不是额外 permission grant」——把同一原则套用到 `ApprovalDetail.sensitivity`；协议本身把「哪些 details 可以显示」交给 policy，而本插件没有 policy 层，所以选择隐藏而不是显示。标记用固定宽度而非按值长度生成，避免泄漏被隐藏值的长度。渲染测试断言该值**不出现在任何单元格里**（`tests/render.test.mjs`）。
+**`sensitivity: 'private'` 的 detail：显示 label，值以固定宽度的 `••••••` 代替。** 这是**无 policy 层下的保守默认，不是协议规定**。依据是 `presentation.zh.md:185` 对 `CopyText.sensitivity` 的语义——「`private` 提醒 Provider 采用不写日志、不显示全文的处理，但不是额外 permission grant」——该句是**为 `CopyText` 写的**，协议并没有把它规定到 `ApprovalDetail.sensitivity` 上；我们**把同一原则扩展**到了审批 detail，因为协议本身把「哪些 details 可以显示」交给 policy，而本插件没有 policy 层，所以选择隐藏而不是显示。标记用固定宽度而非按值长度生成，避免泄漏被隐藏值的长度。渲染测试断言该值**不出现在任何单元格里**（`tests/render.test.mjs`）。
 
-#### 9.8.3 `deadline` 被忽略，`{ status: 'expired' }` 永远不会产生（**已修复**）
+#### 9.8.3 `deadline` 被忽略，`{ status: 'expired' }` 永远不会产生（**已修复，已关闭**）
 
 **修复前：** 请求里带 `deadline` 字段，但**没有任何代码读它**；中止（abort）一律映射为 `cancelled`。后果是消费方设置的截止时间不被遵守，模态会无限期等待，而协议里 `expired` 这个状态在本插件里不可达。
 
@@ -393,6 +395,8 @@ Community v0.15 清单无法声明 protocol supports，而 `@dsh-std/lifecycle` 
 harness 路径（`approval/request` waterfall、`user-questions/request` waterfall）没有 deadline，因此不传、也不起定时器。
 
 **测试：** 纯的一半（`deadlineDelay` 的算术、过去/现在/未来/不可解析）在 `tests/std.test.mjs`；闭包内的一半（真的起定时器、真的关闭模态、真的映射为 `expired`、定时器真的被清掉）在 `tests/deadline.test.mjs`——它挂载**真实的** `apply()` 与真实 cordis 上下文，并通过真实活体句柄驱动三种请求。该文件的断言经过反向验证：把 `detach()` 里的 `clearTimeout` 去掉，定时器泄漏断言立刻失败（`before=3 after=4`）；把 `approvalOutcome('expired')` 改回 `cancelled`，两条过期断言立刻失败。
+
+**本项已关闭。** 到期以独立的 `expired` 结束，与 `cancelled`（消费方中止）严格区分，二者都不是决定；协议里原本不可达的 `expired` 现在可达。§9.8.3 不再属于开放缺口。
 
 #### 9.8.4 通知的 `deduplicationKey` 被忽略，重复通知不会合并
 
@@ -433,7 +437,7 @@ return TUI_OWNED_COMMANDS.map((name) => ({
 
 ### 9.9 控制字符不会进入输出流（**已修复的安全项**）
 
-**修复前：** `Screen.set` 原样存储字符，`term.paint` 把每个 cell 的字符逐个写进输出流。因此一段带 `\x1b[2J\x1b[H` 的文本——一个工具名、一条路径、一个标题、一段 markdown——会被终端当作控制序列执行（清屏、移光标，甚至写剪贴板）。这既是既存问题（harness 自有的 `approval/request` 也画 `req.toolName`），也是标准路径**新增**的来源：另一个组件通过协议送来的 `action` 会直接落到这条路径上，而协议正文（`docs/proposals/presentation.zh.md:359`）明确禁止把这种文本当作可信 markup。
+**修复前：** `Screen.set` 原样存储字符，`term.paint` 把每个 cell 的字符逐个写进输出流。因此一段带 `\x1b[2J\x1b[H` 的文本——一个工具名、一条路径、一个标题、一段 markdown——会被终端当作控制序列执行（清屏、移光标，甚至写剪贴板）。这既是既存问题（harness 自有的 `approval/request` 也画 `req.toolName`），也是标准路径**新增**的来源：另一个组件通过协议送来的 `action` 会直接落到这条路径上，而协议正文（`docs/proposals/presentation.zh.md:359`）的**第二句**正是这条要求——原文「Consumer 不能把 shell escape、ANSI control sequence 或 HTML 注入解释为可信 UI markup。」（该引用已重新核对，确认成立。）**这是本次收尾里唯一一处真正的、新的攻击面**：修复前，一个组件只需发 `action: "x\x1b[2J\x1b[H"`，本 TUI 就会替它输出清屏序列。
 
 **修复后：** 在**咽喉点** `Screen.set`（`lib/term.js`）把 C0（`\u0000-\u001f`）、DEL（`\u007f`）与 C1（`\u0080-\u009f`）替换为可见的 `\uFFFD`；宽字符续接用的空串标记原样通过。选 `set` 而不是逐个调用点，是因为调用点大量绘制不受信内容（`chars[i]`、`title`、`path`、`branch`、`cwd`、`command`、`description`、`line.slice(...)`、`match[0]`……），一处修复覆盖整棵渲染树。用可见占位符而非丢弃：丢弃会改变宽度与布局，占位符让注入**看得见**。
 
@@ -457,12 +461,13 @@ return TUI_OWNED_COMMANDS.map((name) => ({
 | `tests/render.test.mjs` | secret 与 approval 提示模态的渲染与「无残留」断言（其余渲染回归也在此） |
 | `tests/esc-questions.test.mjs` | 真实 cordis 上下文 + 真实 TTY 按键路径下的提问模态 Esc 行为（Task 13 第 6 项） |
 | `tests/deadline.test.mjs` | 真实 cordis 上下文 + 真实活体句柄下的 `deadline` 行为：过期、过期≠取消、定时器不泄漏 |
+| `tests/secret-prompt.test.mjs` | 真实 cordis 上下文 + 真实活体句柄 + 原始字节下的 secret 提示：粘贴落到掩码草稿而非 composer、多行折叠、`minLength`/`maxLength`（UTF-16 计量）、退格删整个码点 |
 
 ---
 
 ## 验证记录
 
-**日期：** 2026-09-20 ｜ **分支：** `feat/dsh-std-interop` ｜ **HEAD：** `86d6275`
+**日期：** 2026-09-20 ｜ **分支：** `feat/dsh-std-interop` ｜ **HEAD：** `86d6275`（Esc 项）；secret 提示的覆盖在 `8772b51` 上执行
 
 实施计划 Task 13 是「真实 TUI 冒烟」关卡，共 10 项。本节如实区分**已执行**与**未验证**，未执行的不写成已执行。
 
@@ -493,16 +498,33 @@ ReferenceError: next is not defined
 
 **边界说明：** 这条验证覆盖的是「Esc 之后的行为」与「按键→模态→委派」的完整链路。它**没有**覆盖真实终端仿真器本身（备用屏、raw mode、OSC 52、鼠标跟踪）在真实 Windows Terminal / iTerm 下的表现，也没有覆盖真实模型发起 `ask_user_question` 工具调用的整条 agent 循环——这两项需要一个真人坐在真实终端前。就本项要回答的问题（Esc 是委派还是挂死）而言，结论是确定的。
 
+### 已执行：第 7、8、9 项 —— secret 提示的三条闭包路径
+
+**结论：三条路径现在都有自动化覆盖，断言全部经过反向验证。**
+
+原先这三项被记为「只能靠 Task 13 的真人冒烟」，理由是它们都在 `apply()` 的闭包内、位于真实 TTY 之后。这个理由**已不成立**：`tests/secret-prompt.test.mjs` 沿用 `tests/deadline.test.mjs` 的做法，把**真实的** `apply()` 挂进**真实的** cordis `Context`（`DSH_HOME` 指向一次性目录），注册真实 harness 服务，通过真实活体句柄（`registerLiveTui`）发出 `secret-input` 请求，并用 `lib/term.js` 自己的解码器喂入**原始字节**（含 `ESC[200~ … ESC[201~` 的 bracketed paste 与 OSC 52 应答）。`app` 是闭包内的 const，测试从它自己的一次 `render()` 上取到该实例来读草稿与 composer——只观察，不改变绘制。
+
+覆盖与反向验证：
+
+| 项 | 断言要点 | 反向验证（故意破坏后立刻失败） |
+| --- | --- | --- |
+| 第 8 项（粘贴路径） | 粘贴进入掩码草稿、`app.inputText` 为空、帧上是 bullets 且**无明文**、提示关闭后 composer 仍为空 | 去掉 `key.name === 'paste'` 拦截 → 9 条失败，`inputText = "sk-live-abc123"` 且关闭后仍在 |
+| 第 8 项（多行折叠） | 含 `\n`/`\r\n` 的粘贴被折叠为单行，换行不留在草稿里 | 去掉 `.replace(/[\r\n]+/g, '')` → 2 条失败，草稿为 `"line1\nline2\r\nline3"` |
+| 第 7 项（长度约束） | 低于 `minLength` → 模态不关且显示错误；高于 `maxLength` → 同样；区间内 → `submitted` 且值原样 | 关掉 min 分支 → 3 条失败（`"ab"` 被提交）；把 min 阈值调严 → 区间内提交断言失败（`expired`） |
+| 第 9 项（UTF-16 计量） | 两个 emoji（2 码点 / 4 UTF-16 单元）在 `maxLength: 2` 下被拒 | 把 `state.draft.length` 换成 `Array.from(...).length` → 3 条失败，模态直接提交了 `"🔑🔑"`（正是校验器会拒绝的值） |
+| 退格删码点 | `"ab🔑"` + Backspace → `"ab"`，且草稿无孤立代理项 | 换成 `slice(0, -1)` → 3 条失败，草稿为 `"ab\ud83d"`（孤立高代理） |
+
+**未能反向区分的一处（如实记录）：** 剪贴板分支里清 `clipboardRequested` 的那一行无法被单独区分。把 `key.name === 'clipboard'` 拦截整段去掉，测试仍然全绿——因为粘贴拦截还在，而只有一条空粘贴才会置上 `clipboardRequested`，空粘贴被粘贴拦截吃掉后 `handleClipboard` 自己的早返回就够了。只有当**两个**拦截同时去掉时，OSC 52 应答才会以明文 `"clipboard-secret"` 落进 composer，此时断言失败。也就是说：这一条测的是「空粘贴 + 剪贴板应答」的合并路径，不是剪贴板拦截本身。
+
 ### 未验证（Task 13 的其余各项）
 
 **以下均未在真实终端上执行**，不应被读作已验证：
 
 - **第 1 项**（TUI 正常启动、标题栏与 composer 渲染）、**第 2 项**（普通消息流式回复；审批模态 `y`/`n`）、**第 3 项**（`/help`、`/stats`、`/settings`）、**第 4 项**（`Ctrl+P` Settings 与凭据掩码）、**第 5 项**（`Esc Esc` 与 `/rewind`）——都是既有交互，本次改动未触碰其代码路径，且 `npm test` 全绿，但**没有在真实终端里逐项走过**。
-- **第 7 项**（`secret-input` 模态的长度约束）——**未验证**。验证用的 profile 里没有 std 消费方会发出 `secret-input` 请求，本次也没有在 `apply()` 里临时插桩调用 `waitForSecret`。它的保障仍然只是 `tests/render.test.mjs` 的渲染断言；`minLength` / `maxLength` 分支与退格删 emoji 的行为**没有**真实终端覆盖。
-- **第 8 项**（secret 模态下的粘贴路径）——**未验证**，同上。
-- **第 9 项**（`secret-input` 边界值与校验器一致，UTF-16 计量）——**未验证**，同上。
 - **第 10 项**（极窄终端下面板宽度钳制，21 列真实边界）——**未验证**；渲染测试的 `[26, 20]` 覆盖了钳制分支，真实 21/22 列的边界未在终端里试过。
 - **第 3 步**（private 复制路径走 OSC 52、未拉起 `powershell.exe`）——**未验证**。
 - **第 1 步与第 4 步**（`npm pack` 装进本地 profile 再卸载）——**未执行**；本仓库的 `dsh-oc-tui-0.1.3.tgz` 是既有产物，未重新打包，也未对 `--profile tui` 做过安装/卸载往返。
 
-因此本节**只**为 §9.7 的 Esc 行为提供了真实运行时的证据；其余各项的覆盖状态与本次改动前相同。
+**仍然只能靠真人的部分**（与本次新增覆盖无关）：真实终端仿真器本身的行为（备用屏、raw mode、OSC 52 剪贴板、鼠标跟踪在真实 Windows Terminal / iTerm 下的表现）、真实模型发起工具调用的整条 agent 循环、以及上面第 1/2/3/4/5/10 项与打包往返。本次新增的是**模态内部逻辑**的覆盖：它用真实 cordis 上下文、真实句柄与真实字节驱动，因此能抓住手搓 context 抓不到的契约（例如 waterfall 的 `next` 续延）；但它不替代「一个真人坐在真实终端前」。
+
+因此本节的覆盖状态是：§9.7 的 Esc、§9.8.3 的 `deadline`、以及第 7/8/9 项（secret 提示）有真实运行时的自动化证据；其余各项的覆盖状态与本次改动前相同。
