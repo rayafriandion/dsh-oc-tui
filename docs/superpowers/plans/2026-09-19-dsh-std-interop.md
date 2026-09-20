@@ -2696,6 +2696,17 @@ git commit -m "feat(tui): add the standalone secret prompt and claim secret-inpu
 
 ---
 
+## 未完成的设计项（文档审查发现，需后续处理）
+
+这三项在设计里被列为"适配工作"，但代码与文档里都没有，Task 12 的审查逐条查了出来。**它们不是本计划的已完成部分**，列在这里以免丢失。
+
+1. **审批提示不显示 `origin` 与 `details`。** 设计的 §6.1 表格把"`risk` / `details[]` 需要新增渲染行"列为待做；实现里标准路径只把 `request.action` 映射成 `toolName`、`request.summary` 映射成 `reason`（`lib/index.js`），`origin`、`details`、`risk` 全部被丢弃。
+   **这可能是一条 MUST 违反。** 协议正文（`docs/proposals/presentation.zh.md`）据此前一次读取写着：「Provider 必须清楚显示 action、summary、origin 和经 policy 允许的 details。」**该引文本轮未能重新核实**——上游克隆的 `docs/proposals/` 已空且网络不可用，所以请先取回协议正文确认，再决定修还是改声明。若确为 MUST，那么"显示 action 与 summary 却丢弃 details"意味着我们声称提供的 `approval` 操作并未满足协议；而 `details` 可能正是用户做出知情决定所需的信息。
+2. **`deadline` 被忽略，`{status:'expired'}` 从不产生。** 设计的 §7 要求它（`deadline` 到期走 `expired`）。请求上确实有 `deadline` 字段，但 `grep -rn 'expired' lib/` 无结果，TUI 从不读 `request.deadline`；中止一律映射为 `{status:'cancelled'}`。后果：消费方给的期限被无视，模态会一直等到用户操作。
+3. **`lib/bridge.js` 的两种加载顺序只测了一种。** 设计的 §8 第 2 项要求"两种顺序各测一遍"，但 `tests/std.test.mjs` 的每个块都是先创建 handler/factory 再 `registerLiveTui`，没有任何块先注册活体 TUI。早绑定仍会被抓到，所以断言有用；但"两种顺序都测了"这句话不成立，文档里已按实情修正。
+
+---
+
 ## 已移出本次范围：B3 ContributionHost
 
 **结论：按原设计不可实现，本 task 不执行。**
