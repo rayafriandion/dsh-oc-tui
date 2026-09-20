@@ -368,19 +368,19 @@ Session、Storage、Tool、Model、Skill、Workspace、Messages、Permission、E
 
 ### 9.8 开放缺口（不是既定行为）
 
-以下各项都不是既定行为，不应被当作已支持的能力：第一项是**上游阻断**，其余五项是设计里要求过、但**代码（或测试）没有做**的部分。列在这里是为了让它们可见，不是为了给它们一个「已知行为」的名分。
+以下各项都不是既定行为，不应被当作已支持的能力：9.8.1 是**上游阻断**，9.8.2 与 9.8.3 已在收尾工作中**修复**（保留编号以便追溯，正文如实记录修法），9.8.4 与 9.8.5 仍是**代码（或测试）没有做**的部分。列在这里是为了让它们可见，不是为了给它们一个「已知行为」的名分。
 
 #### 9.8.1 本插件当前不发布任何协议 support（上游阻断，最重要的一项）
 
 Community v0.15 清单无法声明 protocol supports，而 `@dsh-std/lifecycle` 只允许暂存已声明的 support；因此本插件的 facet 在当前上游上**一条协议都不暂存**，Phase B 处于休眠状态。**完整推理、守卫行为与实测结果见开头的[阻断性发现](#阻断性发现本插件当前不发布任何协议-support)**，此处不重复。
 
-#### 9.8.2 授权提示丢弃了 `origin`、`details` 与 `risk`
+#### 9.8.2 授权提示丢弃了 `origin`、`details` 与 `risk`（**已修复**）
 
-标准路径只把 `request.action` 映射为 `toolName`、`request.summary` 映射为 `reason`（`lib/index.js` 的 `interact` 审批分支），`origin`、`details`、`risk` 三个字段**没有被读取，也没有被显示**。
+**修复前：** 标准路径只把 `request.action` 映射为 `toolName`、`request.summary` 映射为 `reason`（`lib/index.js` 的 `interact` 审批分支），而审批提示只画 `Approval · <toolName> · y allow / n deny`——`summary` 存而不画，`origin`、`details`、`risk` 三个字段根本没有被读取。协议正文（`docs/proposals/presentation.zh.md:359`）要求「Provider 必须清楚显示 action、summary、origin 和经 policy 允许的 details」，因此这是对 MUST 的违反。
 
-**这可能是一条 MUST 违反**：协议文本（据评审引述）要求提供方清晰显示 `action`、`summary`、`origin`，以及策略允许的 `details`。**写本文时无法重新核对这段引文**——上游 clone 的 `docs/proposals/` 是空的，且当时没有网络。所以读者在决定「实现这些显示」还是「修改我们的声称」之前，**应先对着协议原文确认**这条要求的确切措辞与强度。
+**修复后：** `lib/index.js` 的 `awaitApproval` 状态携带 `toolName`（action）、`summary`、`origin`、`details`、`risk`；标准路径逐一映射，harness 路径（`askApproval`）只有 `req.toolName` 与 `req.reason`，后者按同义映射到 `summary`，`origin` / `details` / `risk` 保持 `undefined`——不编造值。`lib/ui.js` 新增 `_approvalLines(width, maxRows)`，把 action、summary、origin、risk、每个 detail 的 `label: value` 渲染成 composer 内容行；`risk` 按 `low`/`medium`/`high` 取 `success`/`warning`/`error` 色调，与其它行视觉上可区分。composer 的高度由同一个 helper 计算（`_layout` 与绘制共用），所以内容与边框不会各说各话；内容超出行数时保留 action 与按键提示，中间部分截断并显示 `… N more`。
 
-值得注意的是，`details` 可能正是用户做出知情决定所需要的信息；当前提示只画工具名与理由，用户看不到它。
+**`sensitivity: 'private'` 的 detail：显示 label，值以固定宽度的 `••••••` 代替。** 这是**无 policy 层下的保守默认，不是协议规定**。依据是第 185 行对 `CopyText.sensitivity` 的语义——「`private` 提醒 Provider 采用不写日志、不显示全文的处理，但不是额外 permission grant」——把同一原则套用到 `ApprovalDetail.sensitivity`；协议本身把「哪些 details 可以显示」交给 policy，而本插件没有 policy 层，所以选择隐藏而不是显示。标记用固定宽度而非按值长度生成，避免泄漏被隐藏值的长度。渲染测试断言该值**不出现在任何单元格里**（`tests/render.test.mjs`）。
 
 #### 9.8.3 `deadline` 被忽略，`{ status: 'expired' }` 永远不会产生
 
@@ -394,7 +394,7 @@ Community v0.15 清单无法声明 protocol supports，而 `@dsh-std/lifecycle` 
 
 后果：消费方要求合并为一条的两条通知会被**分别投递**，去重完全不发生。注意 toast 是单槽位、后来的覆盖先前的，所以紧挨着的两条相同通知在屏幕上看起来仍是一条；但去重并没有发生——若两条之间夹了别的 toast，重复的那条会再次出现。**这一项尚未实现**，而且它不是一次字段映射就能补齐的：实现去重需要给 `showToast` 增加「键 + 时间窗」的状态，是新行为，不是适配。
 
-与 §9.8.2 / §9.8.3 一样，这处在 Phase B 的休眠路径上（见开头的[阻断性发现](#阻断性发现本插件当前不发布任何协议-support)），所以它不是今天用户可见的缺陷；它是上游放开 support 声明之后**必须补上**的工作，记在这里是为了不让它再一次无声地漏掉。
+与 9.8.2 / 9.8.3 一样，这处在 Phase B 的休眠路径上（见开头的[阻断性发现](#阻断性发现本插件当前不发布任何协议-support)），所以它不是今天用户可见的缺陷；但与前两项不同，**它还没有被修**：它是上游放开 support 声明之后**必须补上**的工作，记在这里是为了不让它再一次无声地漏掉。
 
 #### 9.8.5 `lib/bridge.js` 的两种加载顺序只测了一种
 

@@ -350,6 +350,54 @@ for (const [COLS, ROWS] of [[80, 24], [60, 20], [120, 40], [40, 24], [26, 20]]) 
     gridDiff(emulatePaint(writes, COLS, ROWS), screen, COLS, ROWS).length === 0)
 }
 
+// ---- approval prompt -------------------------------------------------------
+// The protocol requires the provider to clearly show the action, the summary,
+// the origin and the policy-permitted details; the prompt used to show the
+// action alone. A detail marked `private` shows its label but not its value, so
+// the assertion this block exists for is that the hidden value never reaches
+// the cell buffer.
+for (const [COLS, ROWS] of [[80, 24], [60, 20], [120, 40], [40, 24]]) {
+  const { term, writes } = paintCapture(COLS, ROWS)
+  const app = new App({ cols: COLS, rows: ROWS, on() {} })
+  app.setSession({ id: "s", title: "Approval" })
+  let screen = app.render(); term.paint(screen)
+  app.pendingApproval = {
+    toolName: "fs.write",
+    summary: "writes to /etc/hosts",
+    origin: "tool:fs.write",
+    risk: "high",
+    details: [
+      { label: "Command", value: "rm -rf ./build" },
+      { label: "API key", value: "sk-private-value", sensitivity: "private" },
+    ],
+    settle() {},
+  }
+  screen = app.render(); term.paint(screen)
+  const rows = screen.cells.map((row) => row.map((c) => c.ch).join(""))
+  const painted = rows.join("\n")
+  ok(`${COLS}x${ROWS} approval prompt leaves no residue`,
+    gridDiff(emulatePaint(writes, COLS, ROWS), screen, COLS, ROWS).length === 0)
+  ok(`${COLS}x${ROWS} approval prompt shows the action`,
+    painted.includes("Approval") && painted.includes("fs.write"))
+  ok(`${COLS}x${ROWS} approval prompt shows the summary`, painted.includes("writes to /etc/hosts"))
+  ok(`${COLS}x${ROWS} approval prompt shows the origin`, painted.includes("tool:fs.write"))
+  ok(`${COLS}x${ROWS} approval prompt shows the risk`, painted.includes("Risk · high"))
+  ok(`${COLS}x${ROWS} approval prompt shows each detail`,
+    painted.includes("Command: rm -rf ./build") && painted.includes("API key"))
+  ok(`${COLS}x${ROWS} approval prompt hides the private detail's value`,
+    !painted.includes("sk-private-value"))
+  ok(`${COLS}x${ROWS} approval prompt keeps the key hints`,
+    painted.includes("y allow") && painted.includes("Esc cancel"))
+  // The risk reads as a warning, not as one more detail row.
+  const riskRow = screen.cells.find((row) => row.map((c) => c.ch).join("").includes("Risk · high"))
+  const riskFg = riskRow?.[riskRow.map((c) => c.ch).join("").indexOf("high")]?.style?.fg
+  ok(`${COLS}x${ROWS} approval prompt tones the risk`, riskFg === THEME.error, String(riskFg))
+  app.pendingApproval = null
+  screen = app.render(); term.paint(screen)
+  ok(`${COLS}x${ROWS} closing the approval prompt leaves no residue`,
+    gridDiff(emulatePaint(writes, COLS, ROWS), screen, COLS, ROWS).length === 0)
+}
+
 console.log("")
 if (failed > 0) { console.log(failed + " render test(s) failed"); process.exit(1) }
 console.log("all render tests passed")
