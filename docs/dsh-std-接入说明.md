@@ -382,9 +382,17 @@ Community v0.15 清单无法声明 protocol supports，而 `@dsh-std/lifecycle` 
 
 **`sensitivity: 'private'` 的 detail：显示 label，值以固定宽度的 `••••••` 代替。** 这是**无 policy 层下的保守默认，不是协议规定**。依据是第 185 行对 `CopyText.sensitivity` 的语义——「`private` 提醒 Provider 采用不写日志、不显示全文的处理，但不是额外 permission grant」——把同一原则套用到 `ApprovalDetail.sensitivity`；协议本身把「哪些 details 可以显示」交给 policy，而本插件没有 policy 层，所以选择隐藏而不是显示。标记用固定宽度而非按值长度生成，避免泄漏被隐藏值的长度。渲染测试断言该值**不出现在任何单元格里**（`tests/render.test.mjs`）。
 
-#### 9.8.3 `deadline` 被忽略，`{ status: 'expired' }` 永远不会产生
+#### 9.8.3 `deadline` 被忽略，`{ status: 'expired' }` 永远不会产生（**已修复**）
 
-请求里带 `deadline` 字段，但**没有任何代码读它**；中止（abort）一律映射为 `cancelled`。后果是消费方设置的截止时间不被遵守，模态会无限期等待，而协议里 `expired` 这个状态在本插件里不可达。
+**修复前：** 请求里带 `deadline` 字段，但**没有任何代码读它**；中止（abort）一律映射为 `cancelled`。后果是消费方设置的截止时间不被遵守，模态会无限期等待，而协议里 `expired` 这个状态在本插件里不可达。
+
+**修复后：** `lib/index.js` 的三个模态等待（`awaitApproval`、`waitForQuestions`、`waitForSecret`）都接受 `deadline`，用 `deadlineDelay(deadline)`（`lib/std/adapt.js`，纯函数）算出剩余毫秒并起一个 `setTimeout`；**每一条 settle 路径都经过 `detach()`，而定时器正是在 `detach()` 里被 `clearTimeout`**，所以一个已被用户回答的模态不会留下活着的定时器（这一点有测试直接读 `process.getActiveResourcesInfo()` 验证）。到期时等待以**独立的结果**结束，而不是 `cancelled`：审批用 TUI 自己的词汇 `'expired'`（`approvalOutcome('expired')` → `{ status: 'expired' }`），提问与 secret 用内部 `EXPIRED` Symbol 哨兵（不可能与答案、密钥值或 defer 的返回值混淆），句柄把它映射为 `{ status: 'expired' }`。
+
+**已过去的 `deadline` 立即到期，而不是起一个负延时定时器**：`deadlineDelay` 对过去的时间返回 `0`，等待函数在**安装模态之前**就以过期结果返回，所以提示既不会闪现一帧，也不会走到 `setTimeout(fn, 0)`。无法解析的 `deadline` 按「没有 deadline」处理——协议自己的校验器会拒绝非 RFC 3339 的值，因此这种形状到不了合规的提供方，而对一个人仍要回答的提示来说，等待比凭空立即过期破坏性更小。
+
+harness 路径（`approval/request` waterfall、`user-questions/request` waterfall）没有 deadline，因此不传、也不起定时器。
+
+**测试：** 纯的一半（`deadlineDelay` 的算术、过去/现在/未来/不可解析）在 `tests/std.test.mjs`；闭包内的一半（真的起定时器、真的关闭模态、真的映射为 `expired`、定时器真的被清掉）在 `tests/deadline.test.mjs`——它挂载**真实的** `apply()` 与真实 cordis 上下文，并通过真实活体句柄驱动三种请求。该文件的断言经过反向验证：把 `detach()` 里的 `clearTimeout` 去掉，定时器泄漏断言立刻失败（`before=3 after=4`）；把 `approvalOutcome('expired')` 改回 `cancelled`，两条过期断言立刻失败。
 
 #### 9.8.4 通知的 `deduplicationKey` 被忽略，重复通知不会合并
 
@@ -423,6 +431,14 @@ return TUI_OWNED_COMMANDS.map((name) => ({
 
 **范围说明：Phase B 目前是休眠的**（Community v0.15 清单无法声明 protocol supports，`lib/facet.js` 因此什么都不暂存——见开头的[阻断性发现](#阻断性发现本插件当前不发布任何协议-support)），所以**今天没有任何消费方能碰到它**。这是 shim 上线之前**必须补上**的工作，不是当前在发生的缺陷。因为 `owner` / `resource` 的形态未定，本文不臆测一个「正确」的 descriptor 应该长什么样。
 
+### 9.9 控制字符不会进入输出流（**已修复的安全项**）
+
+**修复前：** `Screen.set` 原样存储字符，`term.paint` 把每个 cell 的字符逐个写进输出流。因此一段带 `\x1b[2J\x1b[H` 的文本——一个工具名、一条路径、一个标题、一段 markdown——会被终端当作控制序列执行（清屏、移光标，甚至写剪贴板）。这既是既存问题（harness 自有的 `approval/request` 也画 `req.toolName`），也是标准路径**新增**的来源：另一个组件通过协议送来的 `action` 会直接落到这条路径上，而协议正文（`docs/proposals/presentation.zh.md:359`）明确禁止把这种文本当作可信 markup。
+
+**修复后：** 在**咽喉点** `Screen.set`（`lib/term.js`）把 C0（`\u0000-\u001f`）、DEL（`\u007f`）与 C1（`\u0080-\u009f`）替换为可见的 `\uFFFD`；宽字符续接用的空串标记原样通过。选 `set` 而不是逐个调用点，是因为调用点大量绘制不受信内容（`chars[i]`、`title`、`path`、`branch`、`cwd`、`command`、`description`、`line.slice(...)`、`match[0]`……），一处修复覆盖整棵渲染树。用可见占位符而非丢弃：丢弃会改变宽度与布局，占位符让注入**看得见**。
+
+**测试：** `tests/smoke.test.mjs` 断言 cell 缓冲里控制字符被替换、C1/DEL/BEL 同样被替换、宽字符续接标记不受影响，以及**绘制后输出流里不含来自文本的 ESC**（既没有 `\x1b[2J`，也没有 `\x1b[Hcleared`，且 `\uFFFD` 可见）。`npm test` 全绿，说明 composer 的分行渲染（换行是行分隔符，不是被绘制的字符）未受影响。
+
 ---
 
 ## 10. 相关文件
@@ -438,8 +454,9 @@ return TUI_OWNED_COMMANDS.map((name) => ({
 | `lib/std/command-list.js` | 零依赖纯数据：placement 坐标、TUI 自有命令、命令描述 |
 | `lib/index.js` | 在 `apply()` 内注册活体句柄；命令执行路径 |
 | `tests/std.test.mjs` | 本接入的协议、适配与清单测试（不含渲染） |
-| `tests/render.test.mjs` | secret 提示模态的渲染与「无残留」断言（其余渲染回归也在此） |
+| `tests/render.test.mjs` | secret 与 approval 提示模态的渲染与「无残留」断言（其余渲染回归也在此） |
 | `tests/esc-questions.test.mjs` | 真实 cordis 上下文 + 真实 TTY 按键路径下的提问模态 Esc 行为（Task 13 第 6 项） |
+| `tests/deadline.test.mjs` | 真实 cordis 上下文 + 真实活体句柄下的 `deadline` 行为：过期、过期≠取消、定时器不泄漏 |
 
 ---
 

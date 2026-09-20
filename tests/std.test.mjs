@@ -6,7 +6,7 @@ import { fileURLToPath, pathToFileURL } from "node:url"
 import { dirname, join } from "node:path"
 import { registerLiveTui, liveTui } from "../lib/bridge.js"
 import { parseManifest, projectManifest } from "@dsh-std/manifest"
-import { notificationLevel, approvalOutcome, copyTextOptions, toTuiQuestions, fromTuiAnswers } from "../lib/std/adapt.js"
+import { notificationLevel, approvalOutcome, copyTextOptions, deadlineDelay, toTuiQuestions, fromTuiAnswers } from "../lib/std/adapt.js"
 import { createPresentationHandlers, createPresentationImplementations, presentationOperations } from "../lib/std/presentation.js"
 import { COMMAND_PLACEMENT, TUI_OWNED_COMMANDS, createCommandRuntimeHandler, createCommandRuntimeImplementation } from "../lib/std/commands.js"
 import { Terminal } from "../lib/term.js"
@@ -193,6 +193,42 @@ eq("an unknown outcome is not an approval either",
 eq("undefined is not an approval", approvalOutcome(undefined), { status: "cancelled" })
 eq("null is not an approval", approvalOutcome(null), { status: "cancelled" })
 eq("a truthy non-decision is not an approval", approvalOutcome(true), { status: "cancelled" })
+// An expiry is not a decision either, but it is NOT a cancel: the standard has
+// a status for "no answer in time", and losing the distinction is exactly what
+// the ignored `deadline` used to do.
+eq("an expired prompt is reported as expired, not cancelled",
+  approvalOutcome("expired"), { status: "expired" })
+
+// ---- adapt: request deadline ----
+// The pure half of honouring `deadline`: how long until the bound, and whether
+// it has already passed. The wait functions are closure-bound (they live inside
+// apply()), but this arithmetic is what decides whether a timer is armed at all
+// and whether an already-spent deadline expires at once.
+{
+  const NOW = Date.parse("2026-09-20T12:00:00.000Z")
+  eq("no deadline means no timer", deadlineDelay(undefined, NOW), null)
+  eq("a null deadline means no timer", deadlineDelay(null, NOW), null)
+  eq("an empty deadline means no timer", deadlineDelay("", NOW), null)
+  eq("a future deadline is its distance in milliseconds",
+    deadlineDelay("2026-09-20T12:00:05.000Z", NOW), 5000)
+  eq("a deadline exactly now is zero, not negative",
+    deadlineDelay("2026-09-20T12:00:00.000Z", NOW), 0)
+  // The past case is the one that must never become a negative setTimeout delay
+  // (Node clamps it to 0, so it fires on the next tick and the modal flashes).
+  eq("a past deadline is zero", deadlineDelay("2026-09-20T11:59:59.000Z", NOW), 0)
+  eq("a long-past deadline is zero", deadlineDelay("1999-01-01T00:00:00.000Z", NOW), 0)
+  eq("an RFC 3339 offset form is accepted",
+    deadlineDelay("2026-09-20T20:00:10.000+08:00", NOW), 10000)
+  // Unparseable values are treated as absent rather than as an instant expiry:
+  // the protocol's validator rejects a non-RFC-3339 deadline, so this shape
+  // never reaches a conforming provider, and a modal that vanishes the instant
+  // it opens is worse for the human than one that waits.
+  eq("an unparseable deadline is treated as absent", deadlineDelay("not a date", NOW), null)
+  eq("a non-string deadline is treated as absent", deadlineDelay(12345, NOW), null)
+  // The default `now` is Date.now(): a deadline a minute out reads as a minute.
+  const soon = new Date(Date.now() + 60_000).toISOString()
+  eq("the default now is the current clock", deadlineDelay(soon) > 59_000, true)
+}
 
 // ---- adapt: CopyText options ----
 // The single expression that keeps private clipboard text off the Windows
