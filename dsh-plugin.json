@@ -1,0 +1,65 @@
+{
+  "$schema": "https://raw.githubusercontent.com/Yan-Zero/dsh-std/main/packages/manifest/schema/dsh-plugin-0.15.schema.json",
+  "manifestVersion": "0.15",
+  "id": "io.github.rayafriandion.dsh-oc-tui",
+  "name": "dsh-oc-tui",
+  "version": "0.1.4-pre.1",
+  "license": "LGPL-3.0-or-later",
+  "source": { "repository": "https://github.com/rayafriandion/dsh-oc-tui" },
+  "facets": { "host": { "entry": "lib/facet.js", "apiVersion": "v1alpha1" } },
+  "requires": {
+    "contracts": [
+      { "apiVersion": "commands.dsh/v1alpha1", "kind": "Command", "optional": true }
+    ]
+  },
+  "permissions": [
+    { "name": "storage.local.read", "scope": "io.github.rayafriandion.dsh-oc-tui",
+      "reason": "Read TUI settings from the host settings store." },
+    { "name": "storage.local.write", "scope": "io.github.rayafriandion.dsh-oc-tui",
+      "reason": "Persist TUI settings chosen in the Settings pages." }
+  ],
+  "contributes": {
+    "x-dev.dsh-std.extensions": [
+      { "id": "io.github.rayafriandion.dsh-oc-tui.settings",
+        "apiVersion": "commands.dsh/v1alpha1", "kind": "Command", "name": "settings",
+        "spec": { "title": "Open the TUI settings pages",
+                  "placements": [{ "apiVersion": "tui.dsh/v1alpha1", "kind": "CommandLine" }] } },
+      { "id": "io.github.rayafriandion.dsh-oc-tui.help",
+        "apiVersion": "commands.dsh/v1alpha1", "kind": "Command", "name": "help",
+        "spec": { "title": "Show the TUI key and command reference",
+                  "placements": [{ "apiVersion": "tui.dsh/v1alpha1", "kind": "CommandLine" }] } },
+      { "id": "io.github.rayafriandion.dsh-oc-tui.stats",
+        "apiVersion": "commands.dsh/v1alpha1", "kind": "Command", "name": "stats",
+        "spec": { "title": "Show session token and cache statistics",
+                  "placements": [{ "apiVersion": "tui.dsh/v1alpha1", "kind": "CommandLine" }] } },
+      { "id": "io.github.rayafriandion.dsh-oc-tui.new",
+        "apiVersion": "commands.dsh/v1alpha1", "kind": "Command", "name": "new",
+        "spec": { "title": "Start a new session",
+                  "placements": [{ "apiVersion": "tui.dsh/v1alpha1", "kind": "CommandLine" }] } },
+      { "id": "io.github.rayafriandion.dsh-oc-tui.resume",
+        "apiVersion": "commands.dsh/v1alpha1", "kind": "Command", "name": "resume",
+        "spec": { "title": "Resume a persisted session",
+                  "placements": [{ "apiVersion": "tui.dsh/v1alpha1", "kind": "CommandLine" }] } },
+      { "id": "io.github.rayafriandion.dsh-oc-tui.clear",
+        "apiVersion": "commands.dsh/v1alpha1", "kind": "Command", "name": "clear",
+        "spec": { "title": "Clear the transcript",
+                  "placements": [{ "apiVersion": "tui.dsh/v1alpha1", "kind": "CommandLine" }] } },
+      { "id": "io.github.rayafriandion.dsh-oc-tui.cancel",
+        "apiVersion": "commands.dsh/v1alpha1", "kind": "Command", "name": "cancel",
+        "spec": { "title": "Cancel the running turn",
+                  "placements": [{ "apiVersion": "tui.dsh/v1alpha1", "kind": "CommandLine" }] } },
+      { "id": "io.github.rayafriandion.dsh-oc-tui.rewind",
+        "apiVersion": "commands.dsh/v1alpha1", "kind": "Command", "name": "rewind",
+        "spec": { "title": "Rewind the session to an earlier point",
+                  "placements": [{ "apiVersion": "tui.dsh/v1alpha1", "kind": "CommandLine" }] } },
+      { "id": "io.github.rayafriandion.dsh-oc-tui.quit",
+        "apiVersion": "commands.dsh/v1alpha1", "kind": "Command", "name": "quit",
+        "spec": { "title": "Leave the TUI", "aliases": ["exit"],
+                  "placements": [{ "apiVersion": "tui.dsh/v1alpha1", "kind": "CommandLine" }] } }
+    ]
+  },
+  "overrides": [
+    { "target": "@deepseek-ai/dsh-base", "kind": "patch",
+      "description": "cordis.patch.yml inserts the tui-startup, tui-app, agent-presets and tool-ask-user rows." }
+  ]
+}

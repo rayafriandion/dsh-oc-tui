@@ -305,6 +305,99 @@ for (const [COLS, ROWS] of [[130, 45], [100, 30], [80, 24], [60, 20], [46, 16]])
     gridDiff(emulatePaint(writes, COLS, ROWS), screen, COLS, ROWS).length === 0)
 }
 
+// The standalone secret prompt is a new painted overlay; like every other
+// overlay it must not strand cells behind it when it opens, updates or closes.
+// 26 columns is the smallest size where the panel still fits: the width floor
+// is 20 and a centred x needs the remaining columns, so the clamp branch is
+// reachable here and not at 40. Below ~21 columns the panel is clipped and only
+// a human can judge it.
+for (const [COLS, ROWS] of [[80, 24], [60, 20], [120, 40], [40, 24], [26, 20]]) {
+  const { term, writes } = paintCapture(COLS, ROWS)
+  const app = new App({ cols: COLS, rows: ROWS, on() {} })
+  app.setSession({ id: "s", title: "Secret" })
+  let screen = app.render(); term.paint(screen)
+
+  app.pendingSecret = { label: "Provider API key", description: "Paste the key", draft: "", cursor: 0, error: null, settle() {} }
+  screen = app.render(); term.paint(screen)
+  ok(`${COLS}x${ROWS} secret prompt open leaves no residue`,
+    gridDiff(emulatePaint(writes, COLS, ROWS), screen, COLS, ROWS).length === 0)
+
+  app.pendingSecret.draft = "sk-abcdefghijklmnop"
+  screen = app.render(); term.paint(screen)
+  ok(`${COLS}x${ROWS} secret prompt typing leaves no residue`,
+    gridDiff(emulatePaint(writes, COLS, ROWS), screen, COLS, ROWS).length === 0)
+  const rows = screen.cells.map((row) => row.map((c) => c.ch).join(""))
+  // The value is masked: the plaintext must never reach the screen buffer,
+  // where it would be readable by anything that dumps the frame.
+  ok(`${COLS}x${ROWS} secret prompt masks the value`,
+    !rows.some((row) => row.includes("sk-abcdefghijklmnop")))
+  ok(`${COLS}x${ROWS} secret prompt draws the label`,
+    rows.some((row) => row.includes("Provider API key")))
+
+  app.pendingSecret.error = "a value is required"
+  screen = app.render(); term.paint(screen)
+  ok(`${COLS}x${ROWS} secret prompt error leaves no residue`,
+    gridDiff(emulatePaint(writes, COLS, ROWS), screen, COLS, ROWS).length === 0)
+  // Re-assert the mask in the error state: an implementation that echoed the
+  // draft on the error line would otherwise pass every assertion in this block.
+  ok(`${COLS}x${ROWS} secret prompt still masks the value in the error state`,
+    !screen.cells.map((row) => row.map((c) => c.ch).join(""))
+      .some((row) => row.includes("sk-abcdefghijklmnop")))
+
+  app.pendingSecret = null
+  screen = app.render(); term.paint(screen)
+  ok(`${COLS}x${ROWS} closing the secret prompt leaves no residue`,
+    gridDiff(emulatePaint(writes, COLS, ROWS), screen, COLS, ROWS).length === 0)
+}
+
+// ---- approval prompt -------------------------------------------------------
+// The protocol requires the provider to clearly show the action, the summary,
+// the origin and the policy-permitted details; the prompt used to show the
+// action alone. A detail marked `private` shows its label but not its value, so
+// the assertion this block exists for is that the hidden value never reaches
+// the cell buffer.
+for (const [COLS, ROWS] of [[80, 24], [60, 20], [120, 40], [40, 24]]) {
+  const { term, writes } = paintCapture(COLS, ROWS)
+  const app = new App({ cols: COLS, rows: ROWS, on() {} })
+  app.setSession({ id: "s", title: "Approval" })
+  let screen = app.render(); term.paint(screen)
+  app.pendingApproval = {
+    toolName: "fs.write",
+    summary: "writes to /etc/hosts",
+    origin: "tool:fs.write",
+    risk: "high",
+    details: [
+      { label: "Command", value: "rm -rf ./build" },
+      { label: "API key", value: "sk-private-value", sensitivity: "private" },
+    ],
+    settle() {},
+  }
+  screen = app.render(); term.paint(screen)
+  const rows = screen.cells.map((row) => row.map((c) => c.ch).join(""))
+  const painted = rows.join("\n")
+  ok(`${COLS}x${ROWS} approval prompt leaves no residue`,
+    gridDiff(emulatePaint(writes, COLS, ROWS), screen, COLS, ROWS).length === 0)
+  ok(`${COLS}x${ROWS} approval prompt shows the action`,
+    painted.includes("Approval") && painted.includes("fs.write"))
+  ok(`${COLS}x${ROWS} approval prompt shows the summary`, painted.includes("writes to /etc/hosts"))
+  ok(`${COLS}x${ROWS} approval prompt shows the origin`, painted.includes("tool:fs.write"))
+  ok(`${COLS}x${ROWS} approval prompt shows the risk`, painted.includes("Risk · high"))
+  ok(`${COLS}x${ROWS} approval prompt shows each detail`,
+    painted.includes("Command: rm -rf ./build") && painted.includes("API key"))
+  ok(`${COLS}x${ROWS} approval prompt hides the private detail's value`,
+    !painted.includes("sk-private-value"))
+  ok(`${COLS}x${ROWS} approval prompt keeps the key hints`,
+    painted.includes("y allow") && painted.includes("Esc cancel"))
+  // The risk reads as a warning, not as one more detail row.
+  const riskRow = screen.cells.find((row) => row.map((c) => c.ch).join("").includes("Risk · high"))
+  const riskFg = riskRow?.[riskRow.map((c) => c.ch).join("").indexOf("high")]?.style?.fg
+  ok(`${COLS}x${ROWS} approval prompt tones the risk`, riskFg === THEME.error, String(riskFg))
+  app.pendingApproval = null
+  screen = app.render(); term.paint(screen)
+  ok(`${COLS}x${ROWS} closing the approval prompt leaves no residue`,
+    gridDiff(emulatePaint(writes, COLS, ROWS), screen, COLS, ROWS).length === 0)
+}
+
 console.log("")
 if (failed > 0) { console.log(failed + " render test(s) failed"); process.exit(1) }
 console.log("all render tests passed")
