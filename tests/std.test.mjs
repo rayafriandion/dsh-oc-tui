@@ -6,7 +6,7 @@ import { fileURLToPath, pathToFileURL } from "node:url"
 import { dirname, join } from "node:path"
 import { registerLiveTui, liveTui } from "../lib/bridge.js"
 import { parseManifest, projectManifest } from "@dsh-std/manifest"
-import { notificationLevel, approvalOutcome, toTuiQuestions, fromTuiAnswers } from "../lib/std/adapt.js"
+import { notificationLevel, approvalOutcome, copyTextOptions, toTuiQuestions, fromTuiAnswers } from "../lib/std/adapt.js"
 import { createPresentationHandlers, createPresentationImplementations, presentationOperations } from "../lib/std/presentation.js"
 import { COMMAND_PLACEMENT, TUI_OWNED_COMMANDS, createCommandRuntimeHandler, createCommandRuntimeImplementation } from "../lib/std/commands.js"
 import { Terminal } from "../lib/term.js"
@@ -83,12 +83,18 @@ eq("no live TUI initially", liveTui(), null)
   eq("facet entry", manifest.facets.host.entry, "lib/facet.js")
   eq("facet apiVersion", manifest.facets.host.apiVersion, "v1alpha1")
 
-  // The TUI consumes Command resources (it reads other components' commands).
+  // The TUI is *designed* to consume Command resources, but it does not read
+  // other components' commands today: nothing calls protocols.client(...), and
+  // its own command line is parsed from the cordis ctx.commands service. The
+  // entry is therefore declared optional — the lifecycle treats an
+  // unsatisfiable NON-optional requirement as a hard activation failure
+  // (`facet … requirements are unavailable`), and the TUI works with no
+  // Command provider at all.
   // Presentation and ContributionHost are things the TUI *provides*, and
   // Community v0.15 has no `supports` field, so they must NOT appear here.
-  eq("requires.contracts is exactly the Command resource",
+  eq("requires.contracts is exactly the optional Command resource",
     manifest.requires.contracts,
-    [{ apiVersion: "commands.dsh/v1alpha1", kind: "Command" }])
+    [{ apiVersion: "commands.dsh/v1alpha1", kind: "Command", optional: true }])
 
   const projected = projectManifest(manifest)
   const facet = projected.spec.facets[0]
@@ -96,6 +102,13 @@ eq("no live TUI initially", liveTui(), null)
   eq("activation coordinate", facet.activation.apiVersion, "lifecycle.dsh/v1alpha1")
   eq("activation kind", facet.activation.kind, "FacetModule")
   eq("activation module", facet.activation.spec.module, "lib/facet.js")
+
+  // `optional` must survive the projection: the projected facet is the shape
+  // the lifecycle actually negotiates on, so asserting it on the raw manifest
+  // alone would leave the hard-failure path unpinned.
+  eq("the projected Command requirement is optional",
+    facet.protocols.requires,
+    [{ apiVersion: "commands.dsh/v1alpha1", kind: "Command", optional: true }])
 
   // Commands must carry placements, which the simple contributes.commands route
   // drops (its projection keeps only { title }). Without placements a command is
@@ -181,6 +194,31 @@ eq("undefined is not an approval", approvalOutcome(undefined), { status: "cancel
 eq("null is not an approval", approvalOutcome(null), { status: "cancelled" })
 eq("a truthy non-decision is not an approval", approvalOutcome(true), { status: "cancelled" })
 
+// ---- adapt: CopyText options ----
+// The single expression that keeps private clipboard text off the Windows
+// fallback, which passes the payload through powershell.exe argv where any
+// process of the same user can read it back. The negative cases are pinned too:
+// a wrong `true` costs a spawn, but a wrong `false` leaks the secret.
+eq("private text is OSC 52 only", copyTextOptions({ sensitivity: "private" }), { osc52Only: true })
+eq("public text may use the fallback", copyTextOptions({ sensitivity: "public" }), { osc52Only: false })
+eq("a request with no sensitivity is not private", copyTextOptions({}), { osc52Only: false })
+eq("an undefined request is not private", copyTextOptions(undefined), { osc52Only: false })
+// An exact match, not a truthiness or case-folded one.
+eq("an unrecognised sensitivity is not private",
+  copyTextOptions({ sensitivity: "Private" }), { osc52Only: false })
+
+// lib/index.js needs a live cordis ctx and cannot be imported here, so the
+// handle's wiring is pinned at the source level. Without this the assertions
+// above stay green while the handle stops using the extracted mapping: putting
+// back the inline `osc52Only: request.sensitivity === 'private'` must fail.
+{
+  const source = readFileSync(join(repoRoot, "lib/index.js"), "utf8")
+  ok("the copy handle passes copyTextOptions(request) to copyToClipboard",
+    /copyToClipboard\(\s*String\(request\.text\),\s*copyTextOptions\(request\),?\s*\)/.test(source))
+  ok("the handle no longer computes osc52Only inline",
+    !source.includes("osc52Only: request.sensitivity === 'private'"))
+}
+
 // ---- adapt: select field ----
 {
   const { questions, decoders } = toTuiQuestions([
@@ -189,6 +227,9 @@ eq("a truthy non-decision is not an approval", approvalOutcome(true), { status: 
   ])
   eq("select becomes one question", questions.length, 1)
   eq("question id", questions[0].id, "target")
+  // The kind reaches the question so the modal can tell a text field's bounds
+  // from a select field's free text (which the adapter drops, see below).
+  eq("select carries its kind", questions[0].kind, "select")
   eq("question text is the field label", questions[0].question, "Which target?")
   eq("question offers the option labels", questions[0].options.map((o) => o.label), ["Alpha", "Beta"])
   eq("select is single by default", questions[0].multiSelect, false)
@@ -320,6 +361,7 @@ eq("a truthy non-decision is not an approval", approvalOutcome(true), { status: 
     { id: "ok", label: "Proceed?", kind: "confirm" },
   ])
   eq("confirm offers Yes/No", questions[0].options.map((o) => o.label), ["Yes", "No"])
+  eq("confirm carries its kind", questions[0].kind, "confirm")
   eq("confirm yes decodes to true",
     fromTuiAnswers(decoders, { answers: [{ id: "ok", selected: ["Yes"] }] }),
     { answers: { ok: true } })
@@ -337,6 +379,30 @@ eq("a truthy non-decision is not an approval", approvalOutcome(true), { status: 
   eq("text answers come from the custom draft",
     fromTuiAnswers(decoders, { answers: [{ id: "why", selected: [], custom: "because" }] }),
     { answers: { why: "because" } })
+}
+
+// ---- adapt: text bounds must reach the TUI question ----
+// The modal enforces these (lib/index.js questionAnswerError); the protocol's
+// validateQuestionAnswers rejects an out-of-range answer inside the factory's
+// handle, so dropping the bounds here turns a re-prompt into a capability
+// failure. These assertions are what fail if the bounds are dropped.
+{
+  const { questions } = toTuiQuestions([
+    { id: "why", label: "Why?", kind: "text", minLength: 3, maxLength: 8 },
+  ])
+  eq("a text field carries its kind", questions[0].kind, "text")
+  eq("a text field carries minLength", questions[0].minLength, 3)
+  eq("a text field carries maxLength", questions[0].maxLength, 8)
+
+  const { questions: unbounded } = toTuiQuestions([{ id: "free", label: "Free", kind: "text" }])
+  eq("a text field without bounds has no minLength", unbounded[0].minLength, undefined)
+  eq("a text field without bounds has no maxLength", unbounded[0].maxLength, undefined)
+  eq("its kind still reaches the question", unbounded[0].kind, "text")
+
+  // Zero is a real bound, not an absent one: `!== undefined` is the gate, so a
+  // falsy check would silently drop it.
+  const { questions: zero } = toTuiQuestions([{ id: "z", label: "Z", kind: "text", minLength: 0 }])
+  eq("a zero minLength is carried, not dropped", zero[0].minLength, 0)
 }
 
 // ---- adapt: unanswered fields are omitted, not invented ----
