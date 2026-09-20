@@ -9,19 +9,41 @@
 
 ---
 
+## 阻断性发现：本插件当前不发布任何协议 support
+
+**这是上游缺口，不是本插件的缺陷，但它决定了本文其余部分该怎么读：Phase A（静态清单与预检）成立并且可交付；Phase B（运行时协议互操作）在当前上游版本下处于休眠状态。** 已逐层核实（2026-09-20）：
+
+1. `@dsh-std/lifecycle` 的 `implement` 就是 `stageProtocol`（`node_modules/@dsh-std/lifecycle/lib/index.js:214-231`）：它要求 support 已出现在该 facet **自己投影**的 `protocols.supports` 里，否则抛 `TypeError: facet attempted to implement undeclared protocol ...`。
+2. `@dsh-std/adapter-dsh@0.1.1-rc.3` 用 `LifecycleCoordinator` 构造 `ActivationContext`（`lib/index.js:1234`），**没有**自己定义 `implement`——所以交给 facet 的就是上面那个 `stageProtocol`。
+3. adapter 里**没有任何**代码路径把 `protocols.supports` 写到 facet 上：Community v0.15 路线经 `projectManifest` 只产出 `protocols.requires`；adapter 自己的 facet 构造（`lib/index.js:1678`）同样只设 `requires`。
+4. Community v0.15 清单**无法**声明 supports：`requires.supports` 与顶层 `supports` 都被 schema 以 `unknown field` 拒绝（已实测）。
+
+**后果不是「互操作少了一块」，而是会破坏整个 profile。** 若 facet 照旧调用 `implement()`，第一次调用就抛 `TypeError`，激活实例转入 `failed`；而 adapter 的 `mountProfileComponents` 一旦抛错，会回滚 profile 里**全部**已挂载组件——本插件的一个声明缺口会连累同 profile 的其它组件。§2.3 与 §4.3 那条「facet 绝不启动 TUI」的硬约束保护的是双激活；这里的守卫保护的是**整个 profile**，两者不是一回事。
+
+**守卫做了什么。** `lib/facet.js` 的 `activate()` 现在先读自己投影里的 supports：为空就**不暂存任何实现、直接返回**（0 次 `implement()`、0 次 `scope.add()`），并让 `snapshot()` 报告 `degraded` 与原因。这一行为已对着**真实清单投影**实测（0 个实现被暂存），也对着一个**假设声明了四条 support** 的清单实测过（四条全部正常暂存）。
+
+**这意味着什么：**
+
+- **Phase A 是本分支可交付的部分**：静态 `dsh-plugin.json`、发现与预检（不执行插件代码即可被宿主与 CI 读取）完全不受影响。
+- **Phase B 是休眠，不是缺失。** `lib/std/presentation.js`、`lib/std/commands.js`、`lib/std/adapt.js` 都已写好并被测试覆盖，facet 只是不暂存它们。**上游一旦允许 v0.15 组件声明 supports，同一份代码原样生效**，本文任何一行都不用改。
+- **§2 的双激活结论不受影响**：facet 依然不启动 TUI，这条约束与上面的缺口无关。
+- 因此下文凡说「提供」某协议的地方，说的都是**代码具备该能力**；在当前上游上，实际暂存的数量是 **0**。§1、§6、§7.1 已按此加注。
+
+---
+
 ## 1. 本插件的角色：Host 与 Presentation 提供方
 
-dsh-oc-tui **不是协议消费方**，而是生态里的**提供方（provider）**。它把终端里已有的模态、通知、剪贴板和命令行发布成标准协议，让其他 std 组件来驱动它们。
+dsh-oc-tui **不是协议消费方**，而是生态里**设计为提供方（provider）**。它的设计意图是把终端里已有的模态、通知、剪贴板和命令行发布成标准协议，让其他 std 组件来驱动它们——但**当前上游下一条都发布不出去**，见开头的阻断性发现。
 
 | 坐标 | 角色 | 具体内容 |
 | --- | --- | --- |
-| `presentation.dsh/v1alpha1` `UserInteraction` | **提供** | `operations: ['question', 'approval', 'secret-input']` |
-| `presentation.dsh/v1alpha1` `Notification` | **提供** | 无 spec 常量 support |
-| `presentation.dsh/v1alpha1` `CopyText` | **提供** | 无 spec 常量 support |
-| `commands.dsh/v1alpha1` `CommandRuntime` | **提供** | `catalog` / `execute`，只服务 `tui.dsh/v1alpha1 CommandLine` 这一个 placement |
+| `presentation.dsh/v1alpha1` `UserInteraction` | **提供（当前休眠）** | `operations: ['question', 'approval', 'secret-input']` |
+| `presentation.dsh/v1alpha1` `Notification` | **提供（当前休眠）** | 无 spec 常量 support |
+| `presentation.dsh/v1alpha1` `CopyText` | **提供（当前休眠）** | 无 spec 常量 support |
+| `commands.dsh/v1alpha1` `CommandRuntime` | **提供（当前休眠）** | `catalog` / `execute`，只服务 `tui.dsh/v1alpha1 CommandLine` 这一个 placement |
 | `commands.dsh/v1alpha1` `Command` | **消费（静态声明）** | TUI 读取别人贡献的命令；这是 `requires.contracts` 里唯一的一条 |
 
-提供的协议在运行时由 `context.protocols.implement(...)` 产生（见 §6）。`OpenExternal`、`ExternalRedirect` 不提供（见 §7）。
+上表的「提供」描述的是**代码具备的能力**，不是当前的运行时状态：这些 support 只有在 facet 自己的投影声明了它们之后才会被暂存（`context.protocols.implement(...)`，见 §6），而 Community v0.15 清单无法声明 supports——**当前实际暂存 0 条**。详见开头的[阻断性发现](#阻断性发现本插件当前不发布任何协议-support)。`OpenExternal`、`ExternalRedirect` 不提供（见 §7）。
 
 `browser.ui.dsh/v1alpha1` 对本插件**不适用**：上游明确说明没有同一 page realm 的 TUI、headless runtime 与 native UI 不需要实现该协议。
 
@@ -49,10 +71,15 @@ TUI 会抢占终端：设置 stdin raw mode、备用屏、鼠标跟踪，并启�
 
 `lib/facet.js` **不是** TUI 的激活路径。TUI 的生命周期仍归 `cordis.patch.yml` 的四行 bundle 所有；facet 只做两件事：
 
-1. 通过 `context.protocols.implement(support, handler)` 把 TUI 已有的能力发布成标准协议 support，handler 通过 `lib/bridge.js` 转发到当前活体 TUI；
-2. 通过 `snapshot()` 如实报告状态：有活体 TUI → `{ state: 'active' }`；没有 → `{ state: 'degraded', message: '...' }`。
+1. 通过 `context.protocols.implement(support, handler)` 把 TUI 已有的能力发布成标准协议 support（**仅当投影声明了这些 support 时**，见开头的阻断性发现），handler 通过 `lib/bridge.js` 转发到当前活体 TUI；
+2. 通过 `snapshot()` 如实报告状态：只有「有活体 TUI」**且**「本 facet 确实暂存了协议」才返回 `{ state: 'active' }`；否则返回 `{ state: 'degraded', message: '...' }`，message 区分两种原因——没有活体 TUI，或没有可暂存的 support（见开头的阻断性发现）。
 
-`snapshot()` 返回的 `degraded` 是**正常状态**，不是错误：它准确表达了「这个 facet 被挂载了，但 TUI 不是由它启动的，此刻也没有活体实例可供转发」。上游对 `FacetProjection.state` 的定义（`active | degraded`）正好承载这个语义。
+`snapshot()` 返回的 `degraded` 是**正常状态**，不是错误，而且有**两种**成因，各带自己的 message：
+
+- **没有活体 TUI**：facet 被挂载了，但 TUI 不是由它启动的，此刻也没有活体实例可供转发；
+- **没有可暂存的 support**：facet 自己的投影没有声明任何 support，于是它一条都不暂存——这是当前上游下的实际情况，见开头的阻断性发现。
+
+上游对 `FacetProjection.state` 的定义（`active | degraded`）正好承载这两者的语义。
 
 ### 2.3 为什么不能让 facet 自己启动 TUI
 
@@ -94,7 +121,7 @@ TUI 会抢占终端：设置 stdin raw mode、备用屏、鼠标跟踪，并启�
 
 `commands.dsh/v1alpha1 Command` 是 TUI **唯一静态消费**的东西：它要读别人贡献的命令。
 
-Presentation 是 TUI **提供**的（ContributionHost **不在其中**：本插件不注册贡献宿主，`@dsh-std/ui` 也没有可供 facet 使用的实现工厂，见 §7.2）。而 Community v0.15 的清单**没有 `supports` 字段**——静态清单只能声明 `requires`，不能声明 support。support 只能运行时通过 `context.protocols.implement(...)` 产生。把提供的协议写进 `requires.contracts` 会变成**虚假声明**：那是在说「我需要别人提供它」，与事实相反。
+Presentation 是 TUI **提供**的（ContributionHost **不在其中**：本插件不注册贡献宿主，`@dsh-std/ui` 也没有可供 facet 使用的实现工厂，见 §7.2）。而 Community v0.15 的清单**没有 `supports` 字段**——静态清单只能声明 `requires`，不能声明 support。support 只能运行时通过 `context.protocols.implement(...)` 产生，**而运行时这条路当前也是关的**：`implement()` 只接受 facet 投影里已声明的 support，清单既不能声明，投影里自然没有（见开头的阻断性发现）。把提供的协议写进 `requires.contracts` 会变成**虚假声明**：那是在说「我需要别人提供它」，与事实相反。
 
 ### 3.3 为什么命令走 `x-dev.dsh-std.extensions` 富路径
 
@@ -228,6 +255,8 @@ adapter 对传给 `context.protocols.implement(support, value)` 的值有**强�
 
 **推论：任何值交给 `implement()` 之前，先确认协议包提供了 `*Implementation` 工厂。** 没有工厂的协议不是 facet 能提供的（B3 ContributionHost 正是这种情况，见 §7）。
 
+**注意：本节描述的是「若要暂存，必须满足什么」的契约，不是当前发生的事。** 在当前上游下，上面这些 `implement()` 调用**一次都不会发生**——facet 的投影没有声明任何 support，守卫在到达 §6 之前就返回了（见开头的阻断性发现）。这套契约依然有效：上游放开声明之后，本节列出的四条工厂接线原样生效。
+
 ---
 
 ## 7. 当前不实现的部分与原因
@@ -239,7 +268,7 @@ adapter 对传给 `context.protocols.implement(support, value)` 的值有**强�
 | `OpenExternal` | TUI 不能开浏览器；起进程打开 URL 超出插件权限边界。不实现、不声明 |
 | `ExternalRedirect` | 需要 loopback HTTP 服务加浏览器，TUI 两者都没有 |
 
-`UserInteraction.operations` 只列**实际实现**的三个：`question`、`approval`、`secret-input`。协议明确要求 support 表示「实际可用的实现」，不实现就不声明。
+`UserInteraction.operations` 只列**代码实际实现**的三个：`question`、`approval`、`secret-input`。协议明确要求 support 表示「实际可用的实现」，不实现就不声明。这三个操作在 `lib/std/presentation.js` 与 `lib/index.js` 里都有实现并被测试覆盖，但**在当前上游上不会被发布出去**——facet 不暂存任何 support（见开头的阻断性发现），所以这份操作列表目前只在测试里成立。
 
 ### 7.2 UI 贡献
 
@@ -267,6 +296,8 @@ Session、Storage、Tool、Model、Skill、Workspace、Messages、Permission、E
 
 ## 8. 当前无法声称的事
 
+**首先，也是最根本的一条：本插件当前不发布任何协议 support**，因此不能声称自己已在运行时与 `@dsh-std` 互操作（见开头的阻断性发现）。下面两条是另外两个边界。
+
 1. **无法声明 conformance。** 上游 `@dsh-std/conformance` 是纯提案，没有任何 fixtures / vectors / suite 存在，当前既无法声明也无法验证。
 2. **无法注册进 `dsh-ecosystem-spec`。** 该仓库没有 plugin registry，且其 CONTRIBUTING 明确**不接受实现代码提交**；可挂载的只有元协议 / 子协议 / 范例实现 / Profile 四类。所以本插件只能被 adapter 按 profile 依赖发现，不能出现在生态索引里。
 
@@ -278,7 +309,9 @@ Session、Storage、Tool、Model、Skill、Workspace、Messages、Permission、E
 
 以下 §9.1–§9.7 每条都是**刻意的**，并且经过代码评审确认。不了解它们的人会把它们读成 bug。
 
-**§9.8 是例外**：那三项是尚未完成的开放缺口，不是既定行为，不应被当作已支持的能力。
+**§9.8 是例外**：那里列的是开放缺口——一项上游阻断加三项尚未完成的设计项——不是既定行为，不应被当作已支持的能力。
+
+**还有一处范围提示**：§9.1–§9.5 描述的是 `lib/std/adapt.js` 与 std 协议 handler（`interact` / `commandRuntime`）上的行为，而那条路径在当前上游下是休眠的（见开头的阻断性发现）。它们描述的是**代码行为**，目前不是用户可见的行为。§9.6 的 `TUI_OWNED_COMMANDS` 与 §9.7 的 Esc 委托走的是 TUI 自己的路径，不受影响。
 
 ### 9.1 只填自由文本的多选字段，整个字段丢失
 
@@ -329,11 +362,15 @@ Session、Storage、Tool、Model、Skill、Workspace、Messages、Permission、E
 
 **这是本次接入里唯一一处用户可见的行为变化**，并且是修复而非回归。它没有自动化覆盖（模态路径需要真实 TTY 与 cordis 上下文），也**尚未在真实终端上验证**：这项冒烟属于实施计划的 Task 13，截至本文写作时**尚未执行**，也没有 task-13 报告。结果会记录在那里。
 
-### 9.8 尚未完成的三项（开放缺口，不是既定行为）
+### 9.8 开放缺口（不是既定行为）
 
-以下三项在设计的适配清单里，但**代码和文档都没有做**。列在这里是为了让它们可见，不是为了给它们一个「已知行为」的名分。它们需要后续工作，本插件当前不应被理解为已支持这三件事。
+以下各项都不是既定行为，不应被当作已支持的能力：第一项是**上游阻断**，其余三项在设计的适配清单里、但**代码和文档都没有做**。列在这里是为了让它们可见，不是为了给它们一个「已知行为」的名分。
 
-#### 9.8.1 授权提示丢弃了 `origin`、`details` 与 `risk`
+#### 9.8.1 本插件当前不发布任何协议 support（上游阻断，最重要的一项）
+
+Community v0.15 清单无法声明 protocol supports，而 `@dsh-std/lifecycle` 只允许暂存已声明的 support；因此本插件的 facet 在当前上游上**一条协议都不暂存**，Phase B 处于休眠状态。**完整推理、守卫行为与实测结果见开头的[阻断性发现](#阻断性发现本插件当前不发布任何协议-support)**，此处不重复。
+
+#### 9.8.2 授权提示丢弃了 `origin`、`details` 与 `risk`
 
 标准路径只把 `request.action` 映射为 `toolName`、`request.summary` 映射为 `reason`（`lib/index.js` 的 `interact` 审批分支），`origin`、`details`、`risk` 三个字段**没有被读取，也没有被显示**。
 
@@ -341,11 +378,11 @@ Session、Storage、Tool、Model、Skill、Workspace、Messages、Permission、E
 
 值得注意的是，`details` 可能正是用户做出知情决定所需要的信息；当前提示只画工具名与理由，用户看不到它。
 
-#### 9.8.2 `deadline` 被忽略，`{ status: 'expired' }` 永远不会产生
+#### 9.8.3 `deadline` 被忽略，`{ status: 'expired' }` 永远不会产生
 
 请求里带 `deadline` 字段，但**没有任何代码读它**；中止（abort）一律映射为 `cancelled`。后果是消费方设置的截止时间不被遵守，模态会无限期等待，而协议里 `expired` 这个状态在本插件里不可达。
 
-#### 9.8.3 `lib/bridge.js` 的两种加载顺序只测了一种
+#### 9.8.4 `lib/bridge.js` 的两种加载顺序只测了一种
 
 见 §4.1：已测的是「先创建 handler / 工厂，再注册句柄，再调用」；**「先注册句柄、再创建 handler / 工厂」没有测试**。前者足以抓住早绑定，所以这个缺口是覆盖完整性问题，不是已知缺陷。
 
@@ -359,8 +396,8 @@ Session、Storage、Tool、Model、Skill、Workspace、Messages、Permission、E
 | `lib/facet.js` | facet 入口，默认导出 `defineFacet(...)` 形状。只做协议注册与状态上报，**不启动 TUI** |
 | `lib/bridge.js` | 活体 TUI 注册表。零依赖 |
 | `lib/std/adapt.js` | 纯适配函数：std 类型 ↔ TUI 内部形状。无 IO、无副作用 |
-| `lib/std/presentation.js` | Presentation 的 implementation 工厂接线（静态 import `@dsh-std/presentation`） |
-| `lib/std/commands.js` | CommandRuntime 的 handler 与工厂接线（静态 import `@dsh-std/command`） |
+| `lib/std/presentation.js` | Presentation 的 implementation 工厂接线（静态 import `@dsh-std/presentation`）。已写好并有测试；当前不被 facet 暂存（见开头阻断性发现） |
+| `lib/std/commands.js` | CommandRuntime 的 handler 与工厂接线（静态 import `@dsh-std/command`）。已写好并有测试；当前不被 facet 暂存（见开头阻断性发现） |
 | `lib/std/command-list.js` | 零依赖纯数据：placement 坐标、TUI 自有命令、命令描述 |
 | `lib/index.js` | 在 `apply()` 内注册活体句柄；命令执行路径 |
 | `tests/std.test.mjs` | 本接入的协议、适配与清单测试（不含渲染） |
