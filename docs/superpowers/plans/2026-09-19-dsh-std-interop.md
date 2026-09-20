@@ -2401,7 +2401,7 @@ Expected: FAIL — 实际得到 `["question","approval"]`，因为 `presentation
 ```js
 // The standalone secret prompt is a new painted overlay; like every other
 // overlay it must not strand cells behind it when it opens, updates or closes.
-for (const [COLS, ROWS] of [[80, 24], [60, 20], [120, 40]]) {
+for (const [COLS, ROWS] of [[80, 24], [60, 20], [120, 40], [40, 24]]) {
   const { term, writes } = paintCapture(COLS, ROWS)
   const app = new App({ cols: COLS, rows: ROWS, on() {} })
   app.setSession({ id: "s", title: "Secret" })
@@ -2428,6 +2428,11 @@ for (const [COLS, ROWS] of [[80, 24], [60, 20], [120, 40]]) {
   screen = app.render(); term.paint(screen)
   ok(`${COLS}x${ROWS} secret prompt error leaves no residue`,
     gridDiff(emulatePaint(writes, COLS, ROWS), screen, COLS, ROWS).length === 0)
+  // Re-assert the mask in the error state: an implementation that echoed the
+  // draft on the error line would otherwise pass every assertion in this block.
+  ok(`${COLS}x${ROWS} secret prompt still masks the value in the error state`,
+    !screen.cells.map((row) => row.map((c) => c.ch).join(""))
+      .some((row) => row.includes("sk-abcdefghijklmnop")))
 
   app.pendingSecret = null
   screen = app.render(); term.paint(screen)
@@ -2452,7 +2457,10 @@ Expected: FAIL — `this._paintSecret is not a function`（Step 3 只加了状�
   _paintSecret(screen, cols, rows) {
     const t = THEME
     const state = this.pendingSecret
-    const width = Math.max(30, Math.min(cols - 8, 64))
+    // Clamped to the available columns as well as the 64-column cap: a 30-column
+    // floor with a centred x would otherwise push the right edge past the frame
+    // on a very narrow terminal.
+    const width = Math.max(20, Math.min(cols - 8, 64))
     const height = state.description ? 7 : 6
     const x = Math.max(1, Math.floor((cols - width) / 2))
     const y = Math.max(1, Math.floor((rows - height) / 2))
@@ -2568,7 +2576,38 @@ Expected: FAIL — `this._paintSecret is not a function`（Step 3 只加了状�
       }
 ```
 
-在键盘处理里接入该模态。落点精确在 `if (app.pendingApproval) { ... }` 块的**结束大括号之后**、`// The question modal owns every key except Ctrl+C` 注释之前（`lib/index.js:1666`），这样它优先于问题模态与其余所有输入。插入：
+在键盘处理里接入该模态。有**两处**要改，第二处不能省。
+
+**(a) 先截住 `paste` 与 `clipboard`。** `term.on('key', ...)` 的开头对 `mouse` / `paste` / `clipboard` 各有一个 early-return，它们在 `if (app.pendingSecret)` **之前**执行。所以只把分支放在 approval 块之后是不够的：secret 模态打开时粘贴一个 API key 会走 `handlePaste` → `insert()` → `app.inputText`，于是**明文进了屏幕缓冲**（违反本 task 的安全属性），而且模态关闭后它仍留在 composer 里、可以被当聊天消息发出去；同时模态自己根本收不到粘贴输入，而它的说明就写着 "Paste the key"。
+
+把 `term.on('key', (key) => {` 之后、`if (key.name === 'mouse')` **之前**插入：
+
+```js
+     // The secret prompt owns pasted input: routing it through the composer
+     // would put the plaintext in the screen buffer and leave it in the input
+     // row after the prompt closes, where it could be submitted as a message.
+     if (app.pendingSecret && key.name === 'paste') {
+       // A secret is single-line, so collapse the newlines a multi-line paste
+       // would otherwise introduce. Do not trim: leading or trailing spaces can
+       // be part of a secret.
+       const text = key.data ? key.data.toString('utf8').replace(/[\r\n]+/g, '') : ''
+       if (text !== '') {
+         app.pendingSecret.draft += text
+         app.pendingSecret.error = null
+         paint()
+       }
+       return
+     }
+     if (app.pendingSecret && key.name === 'clipboard') {
+       // An OSC 52 clipboard reply answers a clipboard *read* (an image
+       // request). While the prompt is open it must not reach the composer, and
+       // it is not something the user typed, so it is dropped rather than
+       // guessed at.
+       return
+     }
+```
+
+**(b) 再放按键分支。** 落点在 `if (app.pendingApproval) { ... }` 块的**结束大括号之后**、`// The question modal owns every key except Ctrl+C` 注释之前，这样它优先于问题模态与其余所有输入。插入：
 
 ```js
     if (app.pendingSecret) {
@@ -2578,10 +2617,15 @@ Expected: FAIL — `this._paintSecret is not a function`（Step 3 只加了状�
       }
       if (key.name === 'return') {
         const state = app.pendingSecret
-        // Count code points, not UTF-16 units: the protocol's bound is on
-        // string length and a CJK or emoji secret would otherwise be measured
-        // differently here than by the validator.
-        const length = Array.from(state.draft).length
+        // Measured the way the validator measures it: validateSecretInputValue
+        // compares `result.secret.length`, which is UTF-16 units. Counting code
+        // points here would diverge — maxLength 2 with a draft of two emoji
+        // counts 2 here and 4 there, so the modal would submit a value the
+        // validator rejects, which is the capability failure this branch exists
+        // to prevent. (The bullet count below stays code-point based, because
+        // that is what the user perceives as characters; only the bounds are
+        // contractual.)
+        const length = state.draft.length
         if (length === 0) {
           state.error = 'a value is required'
           paint()
