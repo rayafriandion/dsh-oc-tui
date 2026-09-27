@@ -25,9 +25,9 @@
 
 **Files:** Modify: `package.json`
 
-- [ ] `npm install sharp markdown-it highlight.js`(Windows 本机安装验证预编译包落地)
-- [ ] `npm ls sharp markdown-it highlight.js` 确认;`node -e "import('sharp').then(m=>console.log('sharp ok', !!m.default))"` 确认可导入
-- [ ] Commit: `chore(pkg): add sharp, markdown-it, highlight.js for graphics rendering`
+- [x] `npm install sharp markdown-it highlight.js`(Windows 本机安装验证预编译包落地)
+- [x] `npm ls sharp markdown-it highlight.js` 确认;`node -e "import('sharp').then(m=>console.log('sharp ok', !!m.default))"` 确认可导入
+- [x] Commit: `chore(pkg): add sharp, markdown-it, highlight.js for graphics rendering`
 
 ### Task 2: 终端应答解码(term.js)+ 能力探测(caps.js)
 
@@ -40,7 +40,7 @@
 - Produces: `decodeKey` 新事件 `{ name: 'terminal-reply', reply: { kind: 'da1'|'apc'|'dcs'|'windowops'|'unknown', body: string } }`
 - Produces: `caps.js` → `probeCapabilities(term, { timeoutMs=600 }) → Promise<{ kitty, iterm2, sixel, cellW, cellH, name, resolved }>`;`parseDA1(body)→{sixel}`、`parseCellSize(body)→{w,h}|null` 供单测。
 
-- [ ] **Step 1: 写失败测试**(tests/graphics.test.mjs)
+- [x] **Step 1: 写失败测试**(tests/graphics.test.mjs)
 
 ```js
 import { test } from 'node:test'
@@ -88,8 +88,8 @@ test('parseCellSize: CSI 8;h;w t', () => {
 })
 ```
 
-- [ ] **Step 2: 运行确认失败** — `node --test tests/graphics.test.mjs` → FAIL(caps.js 不存在)
-- [ ] **Step 3: 实现 decodeKey 分支**(term.js)
+- [x] **Step 2: 运行确认失败** — `node --test tests/graphics.test.mjs` → FAIL(caps.js 不存在)
+- [x] **Step 3: 实现 decodeKey 分支**(term.js)
 
 关键插入点与顺序:
 1. 在 bracketed-paste 分支**之前**、mouse 分支之后,加 DCS/APC 完整匹配(带 ST/BEL 终止才算完整,否则 return null):
@@ -106,7 +106,7 @@ if (dcs) return { key: { name: 'terminal-reply', reply: { kind: 'dcs', body: dcs
 4. CSI 应答:把现有通用 CSI 正则 `/^\x1b\[([0-9;]*)([A-Za-z~])/` 之前加应答形:`/^\x1b\[([0-9;?]*)([crt])/` — `c` → kind `'da1'`;`t` 且参数以 `8;` 开头 → `'windowops'`,其他 `t` → `'unknown'`;`r` → `'unknown'`。**并在 CSI 通用正则前加部分序列守卫**:`if (/^\x1b\[[0-9;?<>=]*$/.test(s)) return null`(无 final 字节,等更多输入)。
 5. `c`/`t` 应答正则必须放在按键 CSI 正则**之前**,且参数含 `?`(如 `?62;4…c`)只能被应答正则吃掉。
 
-- [ ] **Step 4: 实现 lib/caps.js**
+- [x] **Step 4: 实现 lib/caps.js**
 
 ```js
 // Terminal capability probing. All probes are escape sequences the *client*
@@ -149,8 +149,8 @@ export async function probeCapabilities(term, { timeoutMs = 600 } = {}) {
 }
 ```
 
-- [ ] **Step 5: 测试通过** — `node --test tests/graphics.test.mjs` 全绿;`npm run check` 通过
-- [ ] **Step 6: Commit** `feat(tui): terminal capability probing with reply-safe key decoding`
+- [x] **Step 5: 测试通过** — `node --test tests/graphics.test.mjs` 全绿;`npm run check` 通过
+- [x] **Step 6: Commit** `feat(tui): terminal capability probing with reply-safe key decoding`
 
 ### Task 3: 图像管线与四种编码器(lib/image.js)
 
@@ -166,7 +166,7 @@ export async function probeCapabilities(term, { timeoutMs = 600 } = {}) {
   - `renderImage({ bytes, mediaType }, { protocol, maxCellsW, maxCellsH, cellW, cellH, bgHex, sharp }) → Promise<{ protocol, cellsW, cellsH, payload? , segLines?, hash }>`(sharp 不可用或解码失败 → `{ protocol: 'error', error }`)
   - `LRU` 简单实现 `class PayloadCache { get(k) set(k,v) }`(上限 32 条)
 
-- [ ] **Step 1: 失败测试**(追加)
+- [x] **Step 1: 失败测试**(追加)
 
 ```js
 import { scaleToCells, renderHalfblock, encodeSixel, encodeKittyTransmission, encodeITerm2 } from '../lib/image.js'
@@ -212,8 +212,8 @@ test('encodeITerm2 shape', () => {
 })
 ```
 
-- [ ] **Step 2: 确认失败** `node --test tests/graphics.test.mjs`
-- [ ] **Step 3: 实现 lib/image.js** — 算法要点(完整实现写入文件):
+- [x] **Step 2: 确认失败** `node --test tests/graphics.test.mjs`
+- [x] **Step 3: 实现 lib/image.js** — 算法要点(完整实现写入文件):
   - `scaleToCells`: `cells = ceil` 保比缩放 `min(pxW/cellW, maxCellsW)` 与高度同取小者;均不放大(px<1 cell → 至少 1 格)。
   - `renderHalfblock(rgba, pxW, pxH, cellsW, cellsH, themeBg)`:先把 RGB 转 hex(无 alpha 合成:与 bgHex 按 alpha 混合);每 cell 取像素 (2x,2y) 与 (2x,2y+1);相同→`{ text:' ', style:{bg} }`,不同→`{ text:'▀', style:{fg:上,bg:下} }`。**每行段合并相邻同 style**。rgba 行 stride = pxW*4。奇数像素宽取 floor,右侧溢出像素按 bg。
   - `encodeSixel`:median-cut(实现 ≤80 行:RGB 桶递归按最大通道中位切分至 256 桶,桶均值成调色板)→ sixel:调色板 `#i;2;r;g;b`(0-100 标度),按 6 行带(`?`(二进制或)编码,列游程);头 `\x1bP0;1;0q`,尾 `\x1b\\`;`-` 换行带。dithering: v1 不做(YAGNI,半块真彩已覆盖观感)。
@@ -226,8 +226,8 @@ test('encodeITerm2 shape', () => {
     - `kitty` → `.png().toBuffer()` → base64 → payload 传字符串(放置由 term.js 做)
     - `iterm2` → PNG base64 + 原始像素宽高(用 pxW/pxH 即目标格像素,保持清晰度用 metadata 原始宽高比限宽)
   - `hash = sha1(bytes).slice(0,16)`;PayloadCache LRU 32。
-- [ ] **Step 4: 测试通过 + `npm run check`**
-- [ ] **Step 5: Commit** `feat(tui): image pipeline with halfblock, sixel, kitty, iTerm2 encoders`
+- [x] **Step 4: 测试通过 + `npm run check`**
+- [x] **Step 5: Commit** `feat(tui): image pipeline with halfblock, sixel, kitty, iTerm2 encoders`
 
 ### Task 4: term.js 图像槽位与发射
 
@@ -244,7 +244,7 @@ test('encodeITerm2 shape', () => {
   - resize/start/stop → kitty `d=a` + 清空注册表(payload 缓存保留)
 - `sameStyle` 增加 `link` 字段比较;paint 行发射时对连续相同 `cell.style.link` run 包 OSC 8(`\x1b]8;;URL\x07` … `\x1b]8;;\x07`),URL 过 `safeLink()`(白名单 + 去控制字符)。
 
-- [ ] **Step 1: 失败测试**(追加)
+- [x] **Step 1: 失败测试**(追加)
 
 ```js
 import { Screen, Terminal } from '../lib/term.js'
@@ -278,8 +278,8 @@ test('safeLink rejects javascript: URLs', () => {
 })
 ```
 
-- [ ] **Step 2: 确认失败 → Step 3: 实现 → Step 4: 通过 + `npm run check` + `npm test`(既有 render.test.mjs 行宽/无残留不变量必须仍全绿)**
-- [ ] **Step 5: Commit** `feat(tui): image slab emission in the paint pipeline + OSC 8 links`
+- [x] **Step 2: 确认失败 → Step 3: 实现 → Step 4: 通过 + `npm run check` + `npm test`(既有 render.test.mjs 行宽/无残留不变量必须仍全绿)**
+- [x] **Step 5: Commit** `feat(tui): image slab emission in the paint pipeline + OSC 8 links`
 
 ### Task 5: 转写集成图片(ui.js + index.js,半块先行)
 
@@ -296,7 +296,7 @@ test('safeLink rejects javascript: URLs', () => {
 - App 构造新参 `{ onImageResult?: () => void }` 或复用现有 paintSoon 注入点(index.js 已持有 app,直接在 resolve 后 `app.bumpBlockImages(block)` + paintSoon)。
 - 重复块修复(index.js:537-553):live 路径 `lastUserText` 保存**标记剥离后**文本(`text.replace(/\[Image \d+\]/g,'').trim()`),事件路径同样剥离后比较;匹配且 8s 内 → 跳过 add,不重复注入 images。
 
-- [ ] **Step 1: 失败测试**
+- [x] **Step 1: 失败测试**
 
 ```js
 // smoke: contentImages
@@ -330,11 +330,11 @@ test('user block renders halfblock image lines when result cached', async () => 
 
 render.test.mjs 追加:带 loading 图像占位的帧也满足「每行恰 cols 列、无残留」(复用现有 emulate 循环,加一个含 images 的 addUser 用例)。
 
-- [ ] **Step 2: 确认失败 → Step 3: 实现**
+- [x] **Step 2: 确认失败 → Step 3: 实现**
   - ui.js `case 'user'` / `'assistant'`:文本行后追加图像行(图在前文后?定:文后图前 → 图紧随文本);`case 'tool'`:结果行后追加(不受 6 行文本上限约束)。
   - index.js:`handleSessionEvent` user/message 与 replay user/message、assistant/message、tool/result 都提取 `contentImages`;submit() 把 `app.inputImages` 中已有 bytes 传给 `addUser`(optimistic);`setImageResolver` 用 `attachments.readImage(ref)`;管线 caps 未就绪时 protocol 强制 'halfblock'。
-- [ ] **Step 4: 全测试通过(`npm test`)**
-- [ ] **Step 5: Commit** `feat(tui): render transcript images (halfblock path) + paste dedup fix`
+- [x] **Step 4: 全测试通过(`npm test`)**
+- [x] **Step 5: Commit** `feat(tui): render transcript images (halfblock path) + paste dedup fix`
 
 ### Task 6: markdown.js 重写
 
@@ -345,7 +345,7 @@ render.test.mjs 追加:带 loading 图像占位的帧也满足「每行恰 cols 
 - 保留导出:`wrapSegments`、`inlineSegments`(内部仍用;签名不变)。
 - THEME 新增 key(在 ui.js THEME 同步):`syntaxKeyword/syntaxString/syntaxNumber/syntaxComment/syntaxFunction/syntaxType`、`bubbleUser/bubbleUserBorder/bubbleAssistant/bubbleAssistantBorder`、`tableBorder`。
 
-- [ ] **Step 1: 失败测试**
+- [x] **Step 1: 失败测试**
 
 ```js
 import { renderMarkdown } from '../lib/markdown.js'
@@ -394,15 +394,15 @@ test('markdown: js code gets keyword color segments', () => {
 })
 ```
 
-- [ ] **Step 2: 确认失败 → Step 3: 重写实现**
+- [x] **Step 2: 确认失败 → Step 3: 重写实现**
   - 结构:`import MarkdownIt from 'markdown-it'`,`const md = new MarkdownIt({ html: false, linkify: true })`;`highlight.js` → `hljs.getLanguage(lang) ? hljs.highlight(code, { language: lang }) : null`;token class→theme 映射表(属性选择器如 `hljs-keyword` → syntaxKeyword)。
   - 遍历 `md.parse(text, {})` token 流,维护 `listDepth` 栈与 `quoteDepth`,生成行;fence:lang==='mermaid' → `{ mermaid: content }`(trim 尾换行);image token(`token.type==='image'`)→ `{ image: { url: token.attrs.get('src'), alt: token.children?.[0]?.content ?? '' } }`(url 仅 http/https/data:image 放行,本地 file:// 不进管线 → 落为 alt 文本)。
   - 表格:`thead/tbody` token 收集单元格 → 列宽 = min(max 内容宽, floor((width-边)/n)) → 渲染 `╭─┬─╮ / │ a │ b │ / ├─┼─┤ / ╰─┴─╯`;单元格内容过 inline 渲染;超宽省略 `…`。
   - 任务列表:list_item 内 paragraph 以 `[ ] `/`[x] ` 开头 → 前缀 `□ `/`☑ `。
   - 行内:复用 inlineSegments 增强 link 捕获(markdown-it `inline` token 的 children 里 link_open → 其 child 文本段带 `link`)。
   - 段落合并语义保留(现状:软换行并段)。
-- [ ] **Step 4: 全测试通过(既有 smoke markdown 断言 "Hello world"/"- one"/"▍ quote" 必须仍过 — quote 前缀保持 `▍ `)**
-- [ ] **Step 5: Commit** `feat(tui): markdown-it renderer with tables, nested/task lists, hljs, links`
+- [x] **Step 4: 全测试通过(既有 smoke markdown 断言 "Hello world"/"- one"/"▍ quote" 必须仍过 — quote 前缀保持 `▍ `)**
+- [x] **Step 5: Commit** `feat(tui): markdown-it renderer with tables, nested/task lists, hljs, links`
 
 ### Task 7: mermaid provider 链
 
@@ -414,7 +414,7 @@ test('markdown: js code gets keyword color segments', () => {
 - local:`mmdc --version`(spawn 5s 超时,结果缓存)→ 临时 `.mdd`/`.svg` → sharp(density 按 pxWidth)→ PNG bytes;失败清临时文件。
 - network:`https://mermaid.ink/img/<base64url(code)>?type=png` → 10s 超时 → 缓存文件 `<sha1(code)>.png` 命中直接读。
 
-- [ ] **Step 1: 失败测试**(注入 fetch,不真联网)
+- [x] **Step 1: 失败测试**(注入 fetch,不真联网)
 
 ```js
 import { createMermaidRenderer } from '../lib/mermaid.js'
@@ -433,8 +433,8 @@ test('mermaid: mode off returns null without network', async () => {
 })
 ```
 
-- [ ] **Step 2-4: 实现/通过**(`mmdc 检测`用 `spawn('mmdc', ['--version'])` error 事件判定;测试不依赖 mmdc)
-- [ ] **Step 5: Commit** `feat(tui): mermaid provider chain (mmdc → mermaid.ink → fallback)`
+- [x] **Step 2-4: 实现/通过**(`mmdc 检测`用 `spawn('mmdc', ['--version'])` error 事件判定;测试不依赖 mmdc)
+- [x] **Step 5: Commit** `feat(tui): mermaid provider chain (mmdc → mermaid.ink → fallback)`
 
 ### Task 8: UI 美化(圆角 / 气泡 / 主题 / 图像+mermaid 行消费)
 
@@ -446,20 +446,20 @@ test('mermaid: mode off returns null without network', async () => {
 - `{ mermaid }` 行:`app._imageResults` 旁路 `_mermaidResults: Map<codeHash, render>`;render 成功 → 走图像行(协议渲染);失败/`off` → 高亮代码块(`hljs` lang=mermaid)。
 - `{ image }` 行:转 ImageSource(kind:'url')走 `_imageResults`。
 
-- [ ] **Step 1: 失败测试**(render.test.mjs 追加:user/assistant 气泡在窄宽(20 列)与宽字符(CJK)下帧不变量:每行恰 cols 列、无残留;气泡边框完整)
-- [ ] **Step 2: 实现** — 圆角字符映射表 `ROUNDED = { '┌':'╭', '┐':'╮', '└':'╰', '┘':'╯' }` 应用到所有边框绘制点(composer frame、help/settings/rewind/questions/stats 覆盖层、thinking/note/todo 盒若有角、气泡)。
-- [ ] **Step 3: 全测试通过(`npm test`)+ `npm run check`**
-- [ ] **Step 4: Commit** `feat(tui): rounded chat-bubble layout, refreshed theme, mermaid/image line consumption`
+- [x] **Step 1: 失败测试**(render.test.mjs 追加:user/assistant 气泡在窄宽(20 列)与宽字符(CJK)下帧不变量:每行恰 cols 列、无残留;气泡边框完整)
+- [x] **Step 2: 实现** — 圆角字符映射表 `ROUNDED = { '┌':'╭', '┐':'╮', '└':'╰', '┘':'╯' }` 应用到所有边框绘制点(composer frame、help/settings/rewind/questions/stats 覆盖层、thinking/note/todo 盒若有角、气泡)。
+- [x] **Step 3: 全测试通过(`npm test`)+ `npm run check`**
+- [x] **Step 4: Commit** `feat(tui): rounded chat-bubble layout, refreshed theme, mermaid/image line consumption`
 
 ### Task 9: 设置 + 文档 + 全量验证
 
 **Files:** Modify: `lib/web-settings.js`(或 tui-graphics 注册点)、`lib/index.js`(Graphics 分组菜单项)、`README.md`、`docs/用户手册.md`;`package.json`(check 脚本追加 graphics.test.mjs?— 测试统一 `npm test` 串接)
 
-- [ ] `settings.register('tui-graphics', schema)`(graphics choice auto/off;imageFallback choice halfblock/chip;imageMaxRows number 4..40 默认 20;mermaid choice auto/local/off);Settings → Main 增加分组行(graphics、imageFallback、mermaid、imageMaxRows 四项,choice 走现有 choice 机制)。注册位置:沿用 `tui-updates` 的注册处(实施时 grep `register\(` 定位)。
-- [ ] README:Features 表加 4 行(Real image rendering / Mermaid / Full markdown / Modern UI);Requirements 提示图形协议矩阵与 SSH 说明;Known limitations 更新(IME 不变,GIF 首帧、sextant 未做);Layout 加 caps.js/image.js/mermaid.js。
-- [ ] 用户手册:第 9 节已知限制更新 + 新「图形渲染」小节(协议矩阵、设置项、mermaid 隐私说明)。
-- [ ] `npm test && npm run check` 全绿;`npm pack` → `dsh plugin --profile tui remove -w dsh-oc-tui` → 删旧 tgz → 重 pack → add(README Development 流程);启动真机冒烟:粘贴一张本地图片路径看半块渲染;Windows Terminal 下确认 DA1 探测(sixel 路径在 WT 1.22+ 自动启用);发一条含 ```mermaid 的消息看渲染。
-- [ ] Commit: `docs(tui): graphics rendering matrix, settings, and manual` + `chore(pkg): release 0.2.0`(版本号按 feature 体量定为 0.2.0,可再议)
+- [x] `settings.register('tui-graphics', schema)`(graphics choice auto/off;imageFallback choice halfblock/chip;imageMaxRows number 4..40 默认 20;mermaid choice auto/local/off);Settings → Main 增加分组行(graphics、imageFallback、mermaid、imageMaxRows 四项,choice 走现有 choice 机制)。注册位置:沿用 `tui-updates` 的注册处(实施时 grep `register\(` 定位)。
+- [x] README:Features 表加 4 行(Real image rendering / Mermaid / Full markdown / Modern UI);Requirements 提示图形协议矩阵与 SSH 说明;Known limitations 更新(IME 不变,GIF 首帧、sextant 未做);Layout 加 caps.js/image.js/mermaid.js。
+- [x] 用户手册:第 9 节已知限制更新 + 新「图形渲染」小节(协议矩阵、设置项、mermaid 隐私说明)。
+- [x] `npm test && npm run check` 全绿;`npm pack` → `dsh plugin --profile tui remove -w dsh-oc-tui` → 删旧 tgz → 重 pack → add(README Development 流程);启动真机冒烟:粘贴一张本地图片路径看半块渲染;Windows Terminal 下确认 DA1 探测(sixel 路径在 WT 1.22+ 自动启用);发一条含 ```mermaid 的消息看渲染。
+- [x] Commit: `docs(tui): graphics rendering matrix, settings, and manual` + `chore(pkg): release 0.2.0`(版本号按 feature 体量定为 0.2.0,可再议)
 
 ## Self-Review 结论
 
