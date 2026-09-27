@@ -594,7 +594,7 @@ eq("single session title in header", (headerRows.match(/Test/g) ?? []).length, 1
 ok("session id hidden from header", !headerRows.includes("t1"))
 // user block
 const rendered = screen.cells.map((r) => r.map((c) => c.ch).join("")).join(NL2)
-ok("user label", rendered.includes("You"))
+ok("user label", rendered.includes("you ·"))
 eq("single assistant header per request", (rendered.match(/dsh\s+·/g) ?? []).length, 1)
 ok("no left session rail", !rendered.includes("Test session"))
 ok("multiline composer", rendered.includes("first line") && rendered.includes("second line"))
@@ -988,7 +988,7 @@ gapAssistant.streaming = false
 const gapRows = gapApp.render().cells.map((r) => r.map((c) => c.ch).join(""))
 const thinkIdx = gapRows.findIndex((r) => r.includes("thinking"))
 const answerIdx = gapRows.findIndex((r) => r.includes("answer"))
-ok("blank line separates thinking box from answer", thinkIdx >= 0 && answerIdx === thinkIdx + 2 && gapRows[thinkIdx + 1].trim() === "")
+ok("thinking box sits right above the answer bubble", thinkIdx >= 0 && answerIdx === thinkIdx + 2 && gapRows[thinkIdx + 1].includes("╭"))
 
 // ---- theme / activity animation ----
 const SPINNER = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']

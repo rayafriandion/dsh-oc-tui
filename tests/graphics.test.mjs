@@ -417,3 +417,64 @@ ok('mermaidCachePath distinguishes sources', mermaidCachePath('a') !== mermaidCa
 console.log('')
 if (failed > 0) { console.log(failed + ' test(s) failed'); process.exit(1) }
 console.log('all graphics tests passed')
+
+// ---- bubble layout + mermaid consumption (ui.js) ----
+
+test_bubbles: {
+  const app = new App({ cols: 60, rows: 24, on() {} })
+  app.setSession({ id: 's', title: 'Bubbles' })
+  app.addUser('中文消息：这条消息里有宽字符，用来验证气泡内换行与边框列宽。')
+  app.startAssistant()
+  app.streamChunk({ type: 'text-delta', text: '回答包含 ```js 代码块与 **加粗**。' })
+  const block = app.blocks[1]
+  block.streaming = false
+  block.rev++
+  const COLS = 60, ROWS = 24
+  const screen = app.render()
+  ok('bubble rows stay within the frame', screen.cells.every((row) => row.length === COLS))
+  const rows = screen.cells.map((r) => r.map((c) => c.ch).join(''))
+  ok('user bubble top border', rows.some((r) => r.includes('╭─ you ·')))
+  ok('assistant bubble top border', rows.some((r) => r.includes('╭─ dsh ·')))
+  ok('bubble bottom border', rows.some((r) => r.trimEnd().endsWith('╯')))
+  ok('bubble body carries the left border', rows.some((r) => r.includes('│ ' + '中文消息')))
+}
+test_mermaid: {
+  const app = new App({ cols: 80, rows: 24, on() {} })
+  const requests = []
+  app.onMermaidRequest = (code, key) => requests.push({ code, key })
+  app.startAssistant()
+  app.streamChunk({ type: 'text-delta', text: '```mermaid\ngraph TD\nA-->B\n```' })
+  const block = app.blocks[0]
+  block.streaming = false
+  block.rev++
+  let lines = app._blockLines(block, 76)
+  ok('mermaid fence requests a render', requests.length === 1 && requests[0].code.includes('graph TD'))
+  ok('mermaid loading placeholder', lines.some((l) => (l.segs ?? []).some((s) => s.text.includes('rendering mermaid'))))
+  // Fallback: the provider chain failed — the source renders highlighted.
+  app.setMermaidResult(requests[0].key, { state: 'fallback' })
+  lines = app._blockLines(block, 76)
+  ok('mermaid fallback renders the source', lines.some((l) => (l.segs ?? []).some((s) => s.text.includes('graph TD'))))
+  // Done: delegates to the image pipeline under the derived image key.
+  const imageKey = requests[0].key.replace('mermaid:', 'mermaid-img:')
+  app.setImageResult(imageKey, { state: 'done', protocol: 'halfblock', cellsW: 4, cellsH: 2, segLines: [[{ text: '▀', style: { fg: 'ffffff', bg: '000000' } }], [{ text: '▀', style: { fg: 'ffffff', bg: '000000' } }]] })
+  app.setMermaidResult(requests[0].key, { state: 'done', imageKey })
+  lines = app._blockLines(block, 76)
+  ok('mermaid done renders the diagram rows', lines.filter((l) => (l.segs ?? []).some((s) => s.text === '▀')).length === 2)
+}
+test_markdown_image_data_url: {
+  const app = new App({ cols: 80, rows: 24, on() {} })
+  const requests = []
+  app.onImageRequest = (src) => requests.push(src)
+  app.startAssistant()
+  app.streamChunk({ type: 'text-delta', text: '![logo](https://x/y.png)\n\n![ghost](ftp://bad/z.png)' })
+  const block = app.blocks[0]
+  block.streaming = false
+  block.rev++
+  const lines = app._blockLines(block, 76)
+  eq('https image enters the pipeline', requests.map((r) => r.kind), ['url'])
+  ok('unsupported scheme keeps alt text', lines.some((l) => (l.segs ?? []).some((s) => s.text.includes('ghost'))))
+}
+
+console.log('')
+if (failed > 0) { console.log(failed + ' test(s) failed'); process.exit(1) }
+console.log('all graphics tests passed')
