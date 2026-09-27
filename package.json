@@ -51,8 +51,8 @@
     "@deepseek-ai/dsh-agent": "*",
     "@deepseek-ai/dsh-agent-loop": "*",
     "@deepseek-ai/dsh-agent-presets": "*",
-    "@deepseek-ai/dsh-commands": "*",
     "@deepseek-ai/dsh-cmdline": "*",
+    "@deepseek-ai/dsh-commands": "*",
     "@deepseek-ai/dsh-llm": "*",
     "@deepseek-ai/dsh-session": "*",
     "@deepseek-ai/dsh-session-persistence": "*",
@@ -65,22 +65,54 @@
     "@dsh-std/ui": "0.1.1-rc.1"
   },
   "peerDependenciesMeta": {
-    "@deepseek-ai/cordis": { "optional": false },
-    "@deepseek-ai/dsh-agent": { "optional": true },
-    "@deepseek-ai/dsh-agent-loop": { "optional": true },
-    "@deepseek-ai/dsh-agent-presets": { "optional": true },
-    "@deepseek-ai/dsh-commands": { "optional": true },
-    "@deepseek-ai/dsh-cmdline": { "optional": true },
-    "@deepseek-ai/dsh-llm": { "optional": true },
-    "@deepseek-ai/dsh-session": { "optional": true },
-    "@deepseek-ai/dsh-session-persistence": { "optional": true },
-    "@deepseek-ai/dsh-user-approval": { "optional": true },
-    "@deepseek-ai/dsh-user-questions": { "optional": true },
-    "@deepseek-ai/schemastery": { "optional": false },
-    "@dsh-std/command": { "optional": true },
-    "@dsh-std/presentation": { "optional": true },
-    "@dsh-std/sdk": { "optional": true },
-    "@dsh-std/ui": { "optional": true }
+    "@deepseek-ai/cordis": {
+      "optional": false
+    },
+    "@deepseek-ai/dsh-agent": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-agent-loop": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-agent-presets": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-commands": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-cmdline": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-llm": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-session": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-session-persistence": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-user-approval": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-user-questions": {
+      "optional": true
+    },
+    "@deepseek-ai/schemastery": {
+      "optional": false
+    },
+    "@dsh-std/command": {
+      "optional": true
+    },
+    "@dsh-std/presentation": {
+      "optional": true
+    },
+    "@dsh-std/sdk": {
+      "optional": true
+    },
+    "@dsh-std/ui": {
+      "optional": true
+    }
   },
   "dsh": {
     "bundle": {
@@ -88,7 +120,10 @@
     }
   },
   "dependencies": {
-    "commander": "^15.0.0"
+    "commander": "^15.0.0",
+    "highlight.js": "^11.12.0",
+    "markdown-it": "^15.0.2",
+    "sharp": "^0.35.4"
   },
   "devDependencies": {
     "@dsh-std/command": "0.1.1-rc.1",
