@@ -308,3 +308,72 @@ eq('contentImages ignores text and partial refs', contentImages([
 console.log('')
 if (failed > 0) { console.log(failed + ' test(s) failed'); process.exit(1) }
 console.log('all graphics tests passed')
+
+// ---- markdown rewrite (markdown.js) ----
+
+import { renderMarkdown } from '../lib/markdown.js'
+
+const T = {
+  text: 'f0f4ff', textMuted: '8a93a8', primary: '4d6bfe', codeBg: '1b2740',
+  markdownCode: '7fd88f', markdownHeading: '7c9cff', markdownLinkText: '6c9cff',
+  markdownListItem: '4d6bfe', markdownBlockQuote: '9fb0d8', markdownHorizontalRule: '46547a',
+  markdownCodeBlock: 'f0f4ff', syntaxKeyword: 'c678dd', syntaxString: '98c379',
+  syntaxNumber: 'd19a66', syntaxComment: '7f848e', syntaxFunction: '61afef',
+  syntaxType: 'e5c07b', tableBorder: '3d4d73', background: '0a0e18', error: 'e06c75',
+}
+const mdText = (md) => md.map((l) => Array.isArray(l) ? l.map((s) => s.text).join('') : JSON.stringify(l))
+
+{
+  const md = renderMarkdown('| a | b |\n| --- | --- |\n| 1 | 2 |', T, 40)
+  const text = mdText(md).join('\n')
+  ok('table has vertical borders', text.includes('│'))
+  ok('table has header and body cells', text.includes('a') && text.includes('2'))
+  ok('table uses rounded corners', text.includes('╭') && text.includes('╰'))
+  ok('table rows span the grid width', md.every((l) => l.reduce((w, s) => w + s.text.length, 0) <= 40))
+}
+{
+  const text = mdText(renderMarkdown('- one\n  - one.a\n- two', T, 40))
+  ok('nested list indents', text.some((t) => t.startsWith('  - ') && t.includes('one.a')), JSON.stringify(text))
+  eq('nested list keeps depth-0 items', text.filter((t) => t.startsWith('- ')).length, 2)
+}
+{
+  const text = mdText(renderMarkdown('- [x] done\n- [ ] todo', T, 40))
+  ok('task list done glyph', text.some((t) => t.includes('☑') && t.includes('done')), JSON.stringify(text))
+  ok('task list open glyph', text.some((t) => t.includes('□') && t.includes('todo')), JSON.stringify(text))
+}
+{
+  const withHooks = renderMarkdown('```mermaid\ngraph TD\nA-->B\n```', T, 40, { mermaid: true, image: true })
+  ok('mermaid fence becomes a special line with hooks', withHooks.some((l) => l && l.mermaid === 'graph TD\nA-->B'), JSON.stringify(mdText(withHooks)))
+  const noHooks = renderMarkdown('```mermaid\ngraph TD\nA-->B\n```', T, 40)
+  ok('mermaid fence falls back to a code block without hooks', mdText(noHooks).some((t) => t.includes('graph TD')), JSON.stringify(mdText(noHooks)))
+}
+{
+  const withHooks = renderMarkdown('![logo](https://x/y.png)', T, 40, { mermaid: true, image: true })
+  eq('image syntax becomes a special line with hooks', withHooks[0], { image: { url: 'https://x/y.png', alt: 'logo' } })
+  const noHooks = renderMarkdown('![logo](https://x/y.png)', T, 40)
+  ok('image syntax falls back to alt text without hooks', mdText(noHooks).some((t) => t.includes('logo')), JSON.stringify(mdText(noHooks)))
+}
+{
+  const seg = renderMarkdown('[site](https://x.example)', T, 40)[0].find((s) => s.text === 'site')
+  eq('link keeps the url on the segment style', seg?.style?.link, 'https://x.example')
+}
+{
+  const flat = renderMarkdown('```js\nconst a = 1\n```', T, 40).flat().filter(Boolean)
+  ok('js code gets keyword color', flat.some((s) => s.style?.fg === T.syntaxKeyword && s.text.includes('const')), JSON.stringify(flat.slice(0, 3)))
+}
+{
+  const md = renderMarkdown('Hello **world**\n- one\n> quote\n# Head\npara two', T, 40)
+  eq('compact block semantics match the legacy renderer', mdText(md), ['Hello world', '- one', '▍ quote', 'Head', 'para two'])
+}
+{
+  const text = mdText(renderMarkdown('para one\n\npara two', T, 40))
+  eq('explicit blank line stays a blank line', text, ['para one', '', 'para two'])
+}
+{
+  const md = renderMarkdown('中文长段落测试，这一段包含很多宽字符用来验证换行逻辑是否保持列宽正确不越界', T, 20)
+  ok('CJK wrapping stays within width', md.every((l) => l.reduce((w, s) => w + s.text.length, 0) <= 20))
+}
+
+console.log('')
+if (failed > 0) { console.log(failed + ' test(s) failed'); process.exit(1) }
+console.log('all graphics tests passed')
