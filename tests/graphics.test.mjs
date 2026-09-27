@@ -377,3 +377,43 @@ const mdText = (md) => md.map((l) => Array.isArray(l) ? l.map((s) => s.text).joi
 console.log('')
 if (failed > 0) { console.log(failed + ' test(s) failed'); process.exit(1) }
 console.log('all graphics tests passed')
+
+// ---- mermaid provider chain (mermaid.js) ----
+
+import { createMermaidRenderer, mermaidCachePath } from '../lib/mermaid.js'
+
+{
+  const calls = []
+  const fakeFetch = async (url) => {
+    calls.push(url)
+    return { ok: true, arrayBuffer: async () => new TextEncoder().encode('PNGDATA').buffer }
+  }
+  const r = createMermaidRenderer({ fetch: fakeFetch, mode: 'network', cacheDir: null })
+  const a = await r('graph TD; A-->B', {})
+  ok('network provider returns png bytes', a && Buffer.from(a.bytes).toString().startsWith('PNG'))
+  await r('graph TD; A-->B', {})
+  eq('second call hits the in-memory cache', calls.length, 1)
+  ok('mermaid.ink url carries the encoded diagram', calls[0].startsWith('https://mermaid.ink/img/'))
+  const b = await r('graph LR; C-->D', {})
+  eq('a different diagram misses the cache', calls.length, 2)
+}
+{
+  const r = createMermaidRenderer({ fetch: async () => { throw new Error('offline') }, mode: 'off' })
+  eq('mode off renders nothing', await r('graph TD', {}), null)
+}
+{
+  let fetches = 0
+  const r = createMermaidRenderer({
+    fetch: async () => { fetches++; return { ok: false, status: 503, arrayBuffer: async () => new ArrayBuffer(0) } },
+    mode: 'network',
+    cacheDir: null,
+  })
+  eq('network failure falls back to null', await r('graph TD', {}), null)
+  eq('failure is not cached', (await r('graph TD', {}), fetches), 2)
+}
+eq('mermaidCachePath uses sha1 of the code', mermaidCachePath('abc'), mermaidCachePath('abc'))
+ok('mermaidCachePath distinguishes sources', mermaidCachePath('a') !== mermaidCachePath('b'))
+
+console.log('')
+if (failed > 0) { console.log(failed + ' test(s) failed'); process.exit(1) }
+console.log('all graphics tests passed')
