@@ -41,6 +41,10 @@ Published on **npm** as [`dsh-oc-tui`](https://www.npmjs.com/package/dsh-oc-tui)
 | --- | --- |
 | **Durable sessions** | Create, resume, list, and delete sessions; the transcript is rebuilt from the persisted event log, so a resumed session looks exactly like the one you left. |
 | **Live streaming** | Assistant text and reasoning stream token by token; thinking renders in its own collapsible box that stays collapsed while streaming. |
+| **Real image rendering** | Images in the transcript render as real pixels — kitty graphics, iTerm2 inline images, or sixel, probed from the terminal itself (works over SSH), with a truecolor half-block preview on terminals that support no protocol. Pasted images, stored attachments, and markdown images all flow through one pipeline. See [Graphics rendering](#graphics-rendering). |
+| **Mermaid diagrams** | A ` ```mermaid ` fence renders as a real diagram through a provider chain — local `mmdc` if installed, otherwise mermaid.ink (gated by a setting) — into the same image pipeline; offline it degrades to highlighted source. |
+| **Full markdown** | Tables in rounded boxes, nested and task lists, syntax-highlighted code (190+ languages), and clickable OSC 8 hyperlinks, rendered from markdown-it's CommonMark + GFM token stream. |
+| **Modern chat layout** | Rounded-corner chat bubbles for user and assistant turns (brand blue vs quiet), unified spacing, and a refined DeepSeek-blue theme. |
 | **Tool activity** | Tool cards with a one-line summary (`read src/app.ts`, `run npm test`), flowing spinners while running, and markdown-rendered results. |
 | **Interactive questions** | The model can pause and ask you — option lists, multi-select, free text, and a scrollable plan review — all inline in the terminal. See [Interactive prompts](#interactive-prompts). |
 | **Inline approvals** | `approval/request` prompts are answered with `y` / `n` without leaving the UI; the box shows the action and the reason, with room for origin, risk and details when a `@dsh-std` request carries them. |
@@ -312,6 +316,24 @@ macOS/Linux have no DLL lock, but an install is refused while other dsh processe
 - Agents are created and resumed through `ctx.agents`, the transcript is rebuilt from the session's durable log and fed live by `session/event` (including `assistant/chunk`), model defaults come from `ctx.agentDefaultModel`, and approvals answer the `approval/request` waterfall inline.
 - `ask_user_question` is answered over the `user-questions/request` waterfall: a scoped Cordis waterfall where the modal either returns an answer or delegates with `next()`. An aborted request rejects so the service reports its own `ASK_ABORTED`; requests addressed to another agent are delegated untouched.
 
+## Graphics rendering
+
+Images and mermaid diagrams render as real pixels. On boot the TUI probes the terminal itself — DA1 attributes, an XTVERSION name query, a kitty graphics query, and a cell-size query — and every probe is an escape sequence the *client* terminal answers, so detection works unchanged over SSH where environment variables do not propagate.
+
+| Terminal | Protocol used |
+| --- | --- |
+| kitty, Ghostty | kitty graphics (transmitted once per image, moved by reference — free on scroll) |
+| WezTerm | kitty graphics, or iTerm2 inline images |
+| iTerm2, Konsole, mintty | iTerm2 inline images / sixel |
+| Windows Terminal ≥ 1.22 | sixel |
+| GNOME Terminal, older xterm, anything else | truecolor half-block preview (▀, every font has the glyphs) |
+
+- **Sources.** A pasted image (bytes are already in hand), a stored attachment on resume/replay (read back through the attachment store), a `data:` URL, and a standalone markdown image (`![alt](https://…)`), plus tool-result images such as screenshots.
+- **Budgets.** Images scale to fit the transcript width and a row cap (Settings → Graphics → Image height cap, default 20 rows); GIFs render their first frame.
+- **Mermaid.** A ` ```mermaid ` fence goes through the provider chain: local `mmdc` (mermaid-cli) if it is on `PATH`, otherwise the mermaid.ink service (10 s timeout, disk-cached) — which sends the diagram text to a third party, hence the setting. `Settings → Graphics → Mermaid rendering` offers `auto` / `local` / `off`; every failure degrades to highlighted source, never a broken frame.
+- **Settings.** `Graphics rendering` (`auto`/`off`), `No-protocol fallback` (`halfblock`/`chip`), `Image height cap (rows)`, `Mermaid rendering` (`auto`/`local`/`off`). Changes apply the moment they are saved.
+- **Dependencies.** Rendering is pure npm: `sharp` decodes and scales (prebuilt binaries on all three platforms), and the kitty/iTerm2/sixel encoders are part of the plugin. No external binaries are required; `mmdc` is optional.
+
 ## @dsh-std interop
 
 The package carries a [`dsh-plugin.json`](dsh-plugin.json) manifest and a facet at `lib/facet.js`, so a `@dsh-std` host can discover it without running any code. **What ships today is that static manifest and the preflight surface; the runtime protocol support is currently gated off by an upstream limitation.** The plugin is designed as a **host and Presentation provider** in that ecosystem, not a protocol consumer — its facet is wired to publish `presentation.dsh/v1alpha1` `UserInteraction` / `Notification` / `CopyText` and `commands.dsh/v1alpha1` `CommandRuntime` for other components to drive. Its one `requires.contracts` entry is the `commands.dsh/v1alpha1` `Command` resource, declared **`optional: true`**. The entry is retained for a future consumer and is inert today — nothing calls `protocols.client(...)`, and its own command line is parsed from the cordis `ctx.commands` service, so the TUI behaves identically whether or not a Command provider exists. An unsatisfiable non-optional requirement would be a hard activation failure rather than a warning, and the `optional` flag is what keeps the declaration honest about that. But a Community v0.15 manifest **cannot declare protocol supports**, and `@dsh-std/lifecycle`'s `implement` — which *is* `stageProtocol` — refuses to stage a support the facet has not declared, so the facet stages **nothing**. The protocol shims are written and test-covered; they go live unchanged once upstream closes the gap. See [docs/dsh-std-接入说明.md](docs/dsh-std-接入说明.md#阻断性发现本插件当前不发布任何协议-support) for the layer-by-layer evidence.
@@ -391,27 +413,31 @@ More detail, in Chinese: [docs/用户手册.md](docs/用户手册.md).
 
 ## Known limitations
 
-- IME composition is not exposed by the zero-dependency terminal engine yet. Pasted images are: a bracketed paste of raw image bytes, a `data:image/...;base64,...` URL, a local image path, or an image URL becomes a `[Image N]` attachment, and pasting text nothing recognizes asks the terminal for its clipboard (OSC 52).
+- IME composition is not exposed by the zero-dependency terminal engine yet. Pasted images are: a bracketed paste of raw image bytes, a `data:image/...;base64,...` URL, a local image path, or an image URL — each becomes an attachment and renders in the transcript (see [Graphics rendering](#graphics-rendering)); pasting text nothing recognizes asks the terminal for its clipboard (OSC 52).
 - The plugin does not hot-reload: the profile's HMR root is the profile directory, so a running TUI keeps the copy it booted with.
 - `dsh tui` as a bare subcommand needs a shell alias — the stock launcher hardcodes only `web` and `plugin`.
-- Harness slash commands need a live session; on the title screen the TUI tells you to start one first.
+- Harness slash commands need a live session; on the title screen the TUI tells you to start a session first.
 - Deferring a question with `Esc` does not cancel the tool call — it delegates, and with no other answerer the tool call fails. Per-question skip (as the Web UI composer offers) is not implemented.
 - `--resume`, Settings → Manage sessions, the context meter, and the stats strip depend on services mounted by `@deepseek-ai/dsh-base` (`sessionQuery`, `sessionProjections`); a hand-built profile must provide them. The `sessionStats` projection is a web-app-layer row, so the TUI folds those figures from the session log itself when no profile mounts it.
 - The deferred dsh install on Windows waits for the TUI that scheduled it, not for every dsh process on the machine — close other TUI windows (and `dsh web`) before it runs.
 - Two `@dsh-std` presentation surfaces have no caller today, because the runtime protocol support is gated off (see [@dsh-std interop](#dsh-std-interop)). A standard `secret-input` request would open a masked prompt with `minLength`/`maxLength` bounds, and a standard `ApprovalRequest` is the only thing that populates the approval box's `Origin` / `Risk` / `Details` rows. Both paths are written and integration-tested; neither can be reached from a normal `dsh --profile tui` session, which is why the harness-shaped approval box shows only the action and the summary.
+- Graphics: an image whose top rows are scrolled out of the transcript window shows as blank placeholder rows until it fits fully again (kitty placements cannot anchor off-screen); GIFs animate their first frame only; sixel/iTerm2 payloads are re-emitted when an image's row moves, which is fine locally and throttled on slow SSH links.
 
 ## Layout
 
 ```
 lib/index.js         plugin entry: agents, events, input, commands, approvals, user questions
 lib/startup.js       command-line provider (tuiStartup service)
-lib/term.js          terminal engine (raw mode, screen, key decoding)
-lib/ui.js            responsive view model + renderer (includes the question modal)
+lib/term.js          terminal engine (raw mode, screen, key decoding, image slab emission)
+lib/caps.js          terminal capability probing (DA1, XTVERSION, kitty graphics, cell size)
+lib/image.js         image pipeline (decode/scale + halfblock, sixel, kitty, iTerm2 encoders)
+lib/mermaid.js       mermaid provider chain (mmdc → mermaid.ink → highlighted fallback)
+lib/ui.js            responsive view model + renderer (chat bubbles, question modal)
 lib/metrics.js       whole-session stats + token usage fold (web stats strip / tokenUsage port)
 lib/interrupt.js     Ctrl+C lifecycle state
-lib/web-settings.js  shared WebUI settings projection
+lib/web-settings.js  shared WebUI settings projection (incl. the tui-graphics namespace)
 lib/updates.js       in-app update manager (npm registry + installs)
-lib/markdown.js      markdown -> styled lines
+lib/markdown.js      markdown-it token stream -> styled lines (tables, hljs, links)
 lib/util.js          text/display helpers
 lib/bridge.js        live-TUI registry the @dsh-std facet forwards through
 lib/facet.js         @dsh-std facet entry (interop shell; never starts the TUI)
