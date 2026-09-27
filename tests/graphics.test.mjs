@@ -86,7 +86,7 @@ eq('parseCellSize rejects other forms', parseCellSize('22;0'), null)
 
 // ---- image pipeline (image.js) ----
 
-import { scaleToCells, renderHalfblock, encodeSixel, encodeKittyTransmission, kittyPlacement, kittyDeleteAll, encodeITerm2, renderImage, PayloadCache } from '../lib/image.js'
+import { scaleToCells, renderHalfblock, encodeSixel, encodeKittyTransmission, kittyPlacement, kittyDelete, kittyDeleteAll, encodeITerm2, renderImage, PayloadCache } from '../lib/image.js'
 
 eq('scaleToCells fits 800x600 into 60x20 cells', scaleToCells(800, 600, 60, 20, 8, 16), { cellsW: 53, cellsH: 20 })
 eq('scaleToCells small image stays natural size', scaleToCells(80, 40, 60, 20, 8, 16), { cellsW: 10, cellsH: 3 })
@@ -161,6 +161,91 @@ eq('iTerm2 inline image', encodeITerm2('QUJD', 64, 32), '\x1b]1337;File=inline=1
   ok('renderImage sixel payload', sixel.payload.kind === 'sixel' && sixel.payload.s.endsWith('\x1b\\'))
   const bad = await renderImage({ bytes: Buffer.from('not an image') }, { protocol: 'halfblock', maxCellsW: 4, maxCellsH: 4 })
   eq('renderImage bad input degrades to error', bad.protocol, 'error')
+}
+
+console.log('')
+if (failed > 0) { console.log(failed + ' test(s) failed'); process.exit(1) }
+console.log('all graphics tests passed')
+
+// ---- image slab emission in paint (term.js) ----
+
+import { Screen, Terminal, safeLink } from '../lib/term.js'
+
+test_screen: {
+  const s = new Screen(10, 6)
+  s.setImageRow(2, { key: 'abc', x: 1, cellsW: 4, cellsH: 3, top: true })
+  eq('setImageRow records the top annotation', s.images, [{ key: 'abc', x: 1, cellsW: 4, cellsH: 3, top: true, y: 2 }])
+}
+
+function fakeTerminal() {
+  const t = new Terminal({ output: { write() {}, columns: 80, rows: 24 } })
+  let out = ''
+  t.output = { write(s) { out += s }, on() {}, off() {}, columns: 80, rows: 24 }
+  t.getOut = () => out
+  t.resetOut = () => { out = '' }
+  return t
+}
+
+{
+  const t = fakeTerminal()
+  t.caps = { kitty: true, iterm2: false, sixel: false, cellW: 8, cellH: 16 }
+  t._imagePayloads.set('abc', { kind: 'kitty', b64: 'QUJD', bytes: 3 })
+  const s = new Screen(80, 24)
+  s.setImageRow(3, { key: 'abc', x: 2, cellsW: 10, cellsH: 5, top: true })
+  t.paint(s)
+  ok('kitty first paint transmits', t.getOut().includes('a=T,f=100,q=2,i=1'))
+  ok('kitty first paint places', t.getOut().includes(kittyPlacement(1, 2, 3)))
+  t.resetOut()
+  s.setImageRow(5, { key: 'abc', x: 2, cellsW: 10, cellsH: 5, top: true })
+  t.paint(s)
+  ok('kitty move re-places without retransmit', t.getOut().includes(kittyPlacement(1, 2, 5)) && !t.getOut().includes('a=T,'))
+  t.resetOut()
+  const s2 = new Screen(80, 24)
+  t.paint(s2)
+  ok('kitty deletes when the image leaves the screen', t.getOut().includes(kittyDelete(1)))
+}
+
+{
+  const t = fakeTerminal()
+  t.caps = { kitty: false, iterm2: false, sixel: true, cellW: 8, cellH: 16 }
+  t._imagePayloads.set('six', { kind: 'sixel', s: 'SIXELPAYLOAD' })
+  const s = new Screen(80, 24)
+  s.setImageRow(2, { key: 'six', x: 0, cellsW: 20, cellsH: 4, top: true })
+  t.paint(s)
+  ok('sixel payload emitted at position', t.getOut().includes('\x1b[3;1HSIXELPAYLOAD'))
+  t.resetOut()
+  s.setImageRow(6, { key: 'six', x: 0, cellsW: 20, cellsH: 4, top: true })
+  t.paint(s)
+  ok('sixel re-emits when the image moves', t.getOut().includes('\x1b[7;1HSIXELPAYLOAD'))
+}
+
+{
+  const t = fakeTerminal()
+  t.caps = { kitty: true, iterm2: false, sixel: false, cellW: 8, cellH: 16 }
+  t.started = true
+  t.stop()
+  ok('stop deletes all kitty images', t.getOut().includes(kittyDeleteAll()))
+}
+
+eq('safeLink rejects non-http schemes', safeLink('javascript:alert(1)'), null)
+eq('safeLink rejects control characters', safeLink('https://x.example/\u0007'), null)
+eq('safeLink percent-encodes parens', safeLink('https://x.example/a(b)'), 'https://x.example/a%28b%29')
+eq('safeLink keeps plain urls', safeLink('https://x.example/a'), 'https://x.example/a')
+
+{
+  // OSC 8 hyperlinks: emission wraps exactly the linked run inside one row
+  // rewrite (SGR sequences may sit between the OSC 8 wrapper and the text).
+  const t = fakeTerminal()
+  const s = new Screen(40, 2)
+  s.text(0, 0, 'xy', null)
+  const style = { fg: '6c9cff', bg: null, bold: false, dim: false, italic: false, underline: true, link: 'https://x.example' }
+  s.text(2, 0, 'ab', style)
+  t.paint(s)
+  const out = t.getOut()
+  const open = out.indexOf('\x1b]8;;https://x.example\x07')
+  const close = out.indexOf('\x1b]8;;\x07')
+  ok('paint opens OSC 8 after the plain run', open > 0 && open < out.indexOf('ab'))
+  ok('paint closes OSC 8 after the linked run', close > open)
 }
 
 console.log('')
