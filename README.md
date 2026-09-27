@@ -1,5 +1,11 @@
 # dsh-oc-tui
 
+**As the custom TUI engine cannot support advanced visual effects or full Markdown and Mermaid integration**, future versions will incorporate dependencies such as `chafa`, `mmdc`, and `mdcat` to enhance the visual experience. This update is tentatively scheduled for version `0.2.0` ; please note that this may result in incompatibility between the `0.1.x` and `0.2.x` series. We plan to release pre-release versions first to gather feedback. If you have suggestions for specific visual features, please share them in this issue thread or open a new issue with a title containing `Visual Experience Suggestion`
+
+**_Thank you for your support of the `dsh-oc-tui` plugin!_**
+
+---
+
 **A terminal UI for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)** — an opencode-inspired chat client that boots inside the `dsh` process as a profile app plugin.
 
 [![npm latest](https://img.shields.io/npm/v/dsh-oc-tui?label=npm&color=BF392B)](https://www.npmjs.com/package/dsh-oc-tui)
