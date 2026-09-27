@@ -295,7 +295,7 @@ ok("main settings loaded", shared.items.some((item) => item.label === "Busy Ente
 ok("model items moved to the Model tab", !shared.items.some((item) => item.label === "Default model" || item.label === "Default provider" || item.field === "reasoningEffort"))
 ok("manage sessions setting", shared.items.some((item) => item.kind === "manage-sessions" && item.label === "Manage sessions"))
 ok("new session setting", shared.items.some((item) => item.kind === "new-session" && item.label === "New session"))
-eq("main tab headers", shared.items.filter((item) => item.kind === "header").map((item) => item.label).join(","), "General,Sessions,System")
+eq("main tab headers", shared.items.filter((item) => item.kind === "header").map((item) => item.label).join(","), "General,Graphics,Sessions,System")
 eq("settings menu is Main, Model, Update", SETTINGS_MENU.map((entry) => entry.id).join(","), "main,model,update")
 ok("main tab carries the left menu", Array.isArray(shared.menu) && shared.menu.map((entry) => entry.label).join(",") === "Main,Model,Update" && shared.menuIndex === 0)
 const presetItem = shared.items.find((item) => item.ns === "agent-presets")
@@ -629,7 +629,7 @@ ok("main tab drops model settings", !settingsRendered.includes("Default model"))
 // Grouped settings: section headers render as their own rows and the
 // selection / hit regions never rest on them.
 ok("settings groups rendered", settingsRendered.includes("GENERAL") && settingsRendered.includes("SESSIONS") && settingsRendered.includes("SYSTEM") && !settingsRendered.includes("MODELS"))
-ok("settings items are grouped", refreshedShared.items.filter((item) => item.kind === "header").map((item) => item.label).join(",") === "General,Sessions,System")
+ok("settings items are grouped", refreshedShared.items.filter((item) => item.kind === "header").map((item) => item.label).join(",") === "General,Graphics,Sessions,System")
 ok("selection skips headers", app.settingsItems[app.settingsSelection]?.kind !== "header" && app.settingsSelection === refreshedShared.items.findIndex((item) => item.kind !== "header"))
 ok("header rows carry no hit region", !app.hitRegions.some((region) => region.kind === "settings-item" && app.settingsItems[region.settingsIndex]?.kind === "header"))
 ok("mouse settings targets", app.hitRegions.some((region) => region.kind === "settings-item" && region.settingsIndex === app.settingsSelection))
