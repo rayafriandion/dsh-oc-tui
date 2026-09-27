@@ -72,7 +72,7 @@ eq('parseCellSize rejects other forms', parseCellSize('22;0'), null)
   // The terminal answers after the probes were sent.
   term.emit('key', { name: 'terminal-reply', reply: { kind: 'da1', body: '?62;4;6' } })
   term.emit('key', { name: 'terminal-reply', reply: { kind: 'dcs', body: '>|WezTerm 20240203' } })
-  term.emit('key', { name: 'terminal-reply', reply: { kind: 'apc', body: 'i=31;OK' } })
+  term.emit('key', { name: 'terminal-reply', reply: { kind: 'apc', body: 'Gi=31;OK' } })
   term.emit('key', { name: 'terminal-reply', reply: { kind: 'windowops', body: '8;16;9' } })
   const caps = await probe
   eq('probe caps kitty', caps.kitty, true)
