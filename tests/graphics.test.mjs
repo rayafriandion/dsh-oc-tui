@@ -251,3 +251,60 @@ eq('safeLink keeps plain urls', safeLink('https://x.example/a'), 'https://x.exam
 console.log('')
 if (failed > 0) { console.log(failed + ' test(s) failed'); process.exit(1) }
 console.log('all graphics tests passed')
+
+// ---- transcript image integration (util.js + ui.js) ----
+
+import { contentImages } from '../lib/util.js'
+import { App } from '../lib/ui.js'
+
+eq('contentImages extracts usable refs', contentImages([
+  { type: 'text', text: '看这张图' },
+  { type: 'image', attachment: { attachmentId: 'sha256:abc', mediaType: 'image/png', bytes: 3, width: 1, height: 1 } },
+]), [{ kind: 'ref', key: 'ref:sha256:abc', ref: { attachmentId: 'sha256:abc', mediaType: 'image/png', bytes: 3, width: 1, height: 1 }, mediaType: 'image/png' }])
+eq('contentImages ignores text and partial refs', contentImages([
+  { type: 'text', text: 'x' },
+  { type: 'image', attachment: { attachmentId: 'sha256:no-media-type' } },
+]).length, 0)
+
+{
+  const app = new App({ cols: 80, rows: 24, on() {} })
+  const requests = []
+  app.onImageRequest = (src) => requests.push(src)
+  app.addUser('看图', { images: [{ kind: 'bytes', key: 'k1', bytes: Buffer.alloc(1) }] })
+  const block = app.blocks[0]
+  const lines = app._blockLines(block, 76)
+  ok('loading placeholder line while rendering', lines.some((l) => (l.segs ?? []).some((s) => s.text.includes('rendering image'))))
+  eq('onImageRequest fired once per key', requests.map((r) => r.key), ['k1'])
+  app.setImageResult('k1', { state: 'done', protocol: 'halfblock', cellsW: 2, cellsH: 1, segLines: [[{ text: '▀', style: { fg: 'ffffff', bg: '000000' } }]] })
+  const lines2 = app._blockLines(block, 76)
+  ok('halfblock lines appear after the result lands', lines2.some((l) => (l.segs ?? []).some((s) => s.text === '▀')))
+}
+{
+  const app = new App({ cols: 80, rows: 24, on() {} })
+  app.graphicsProtocol = 'kitty'
+  app.addUser('图', { images: [{ kind: 'ref', key: 'ref:x', ref: {} }] })
+  app.setImageResult('ref:x', { state: 'done', protocol: 'kitty', cellsW: 10, cellsH: 4 })
+  const lines = app._blockLines(app.blocks[0], 76)
+  const imageLines = lines.filter((l) => l.image)
+  eq('protocol render reserves cellsH rows', imageLines.length, 4)
+  eq('first annotation row is the top', imageLines[0].image.top, true)
+  eq('annotation carries placement', { x: imageLines[0].image.x, w: imageLines[0].image.cellsW, h: imageLines[0].image.cellsH }, { x: 2, w: 10, h: 4 })
+}
+{
+  const app = new App({ cols: 80, rows: 24, on() {} })
+  app.addUser('先发的文本')
+  ok('attachImagesToLastUser works on a bare user block', app.attachImagesToLastUser([{ kind: 'ref', key: 'ref:y', ref: {} }]))
+  ok('second attach refused (block already has images)', !app.attachImagesToLastUser([{ kind: 'ref', key: 'ref:z', ref: {} }]))
+  ok('attached images render', app._blockLines(app.blocks[0], 76).some((l) => (l.segs ?? []).some((s) => s.text.includes('rendering image'))))
+}
+{
+  const app = new App({ cols: 80, rows: 24, on() {} })
+  app.addUser('bad image', { images: [{ kind: 'bytes', key: 'bad' }] })
+  app.setImageResult('bad', { state: 'error', error: 'decode failed' })
+  const lines = app._blockLines(app.blocks[0], 76)
+  ok('error state renders a failed line', lines.some((l) => (l.segs ?? []).some((s) => s.text.includes('image render failed'))))
+}
+
+console.log('')
+if (failed > 0) { console.log(failed + ' test(s) failed'); process.exit(1) }
+console.log('all graphics tests passed')

@@ -401,3 +401,37 @@ for (const [COLS, ROWS] of [[80, 24], [60, 20], [120, 40], [40, 24]]) {
 console.log("")
 if (failed > 0) { console.log(failed + " render test(s) failed"); process.exit(1) }
 console.log("all render tests passed")
+
+// ---- image blocks -----------------------------------------------------------
+// Image lines (halfblock text rows and graphics-protocol reserved rows) must
+// obey the same frame contract as every other row: exactly cols columns, no
+// residue, and the Screen carries the image slab annotations.
+{
+  const COLS = 100, ROWS = 30
+  const { term, writes } = paintCapture(COLS, ROWS)
+  const app = new App({ cols: COLS, rows: ROWS, on() {} })
+  app.setSession({ id: "s", title: "Images" })
+  app.addUser("看看这张", { images: [{ kind: "bytes", key: "img:1", bytes: Buffer.alloc(1) }] })
+  term.paint(app.render())
+  app.setImageResult("img:1", { state: "done", protocol: "halfblock", cellsW: 40, cellsH: 6, segLines: Array.from({ length: 6 }, (_, i) => [{ text: "\u2580".repeat(20) + " ".repeat(20), style: { fg: "4d6bfe", bg: "0a0e18" } }]) })
+  let screen = app.render()
+  term.paint(screen)
+  let bad = gridDiff(emulatePaint(writes, COLS, ROWS), screen, COLS, ROWS)
+  ok("halfblock image frame leaves no residue", bad.length === 0, JSON.stringify(bad.slice(0, 6)))
+  ok("halfblock image rows span exact width", screen.cells.slice().every((row) => row.length === COLS))
+
+  // Protocol mode: reserved rows + annotations, then the image moves (scroll)
+  // and the vacated rows must repaint over the old pixels.
+  app.graphicsProtocol = "sixel"
+  app.setImageResult("img:1", { state: "done", protocol: "sixel", cellsW: 40, cellsH: 6 })
+  screen = app.render()
+  term.paint(screen)
+  bad = gridDiff(emulatePaint(writes, COLS, ROWS), screen, COLS, ROWS)
+  ok("protocol image frame leaves no residue", bad.length === 0, JSON.stringify(bad.slice(0, 6)))
+  ok("protocol frame carries the image slab", screen.images.length === 1 && screen.images[0].cellsH === 6)
+  app.scrollTranscript(2)
+  screen = app.render()
+  term.paint(screen)
+  bad = gridDiff(emulatePaint(writes, COLS, ROWS), screen, COLS, ROWS)
+  ok("scrolled image frame leaves no residue", bad.length === 0, JSON.stringify(bad.slice(0, 6)))
+}
