@@ -119,9 +119,23 @@ eq('scaleToCells never rounds to zero', scaleToCells(4, 4, 60, 20, 8, 16), { cel
   // 2x1 px: red + blue -> two palette entries, one band.
   const s = encodeSixel(Buffer.from([255, 0, 0, 255, 0, 0, 255, 255]), 2, 1)
   ok('sixel DCS header', s.startsWith('\x1bP0;1;1q'))
+  ok('sixel raster attributes force square pixels', s.startsWith('\x1bP0;1;1q"1;1;1;2'))
   ok('sixel ST terminator', s.endsWith('\x1b\\'))
   ok('sixel palette entries', s.includes('#0') && s.includes('#1'))
   ok('sixel data chars in 0x3F range', [...s].some((ch) => ch.codePointAt(0) >= 0x3F && ch.codePointAt(0) <= 0x7E))
+}
+{
+  // Column alignment: 4x1 px with red on the left half, blue on the right.
+  // Each color pass must cover ALL columns — gaps are '?' (blank sixels) —
+  // so the blue pass renders at columns 3-4 instead of sliding into 1-2.
+  const s = encodeSixel(Buffer.from([
+    255, 0, 0, 255, 255, 0, 0, 255, 0, 0, 255, 255, 0, 0, 255, 255,
+  ]), 4, 1)
+  const data = s.slice(s.indexOf('q') + 1, s.length - 2)
+  ok('sixel fills gaps to keep columns aligned', data.includes('#0') && data.includes('??') && data.includes('#1'), JSON.stringify(data))
+  // Red pass covers columns 1-2 with pixel bits and 3-4 with blanks; the run
+  // of two identical chars stays unrolled.
+  ok('sixel red pass spans full width then CR', data.includes('@') && data.includes('?') && data.includes('$'), JSON.stringify(data))
 }
 {
   const s = encodeKittyTransmission(7, 'A'.repeat(5000))
