@@ -234,6 +234,107 @@ function fakeTerminal() {
 }
 
 {
+  // A sixel/iTerm2 image is drawn into the text grid, so every rewrite of its
+  // rows erases the pixels that were painted there. paint() must therefore
+  // re-emit the payload whenever it writes text over the image's rows. The
+  // regression it guards: the rows were force-rewritten on every frame while
+  // the payload only went out when the image moved, so an image showed for one
+  // frame and then vanished — images and mermaid diagrams alike, since both
+  // reach the terminal through this path.
+  const t = fakeTerminal()
+  t.caps = { kitty: false, iterm2: false, sixel: true, cellW: 8, cellH: 16 }
+  t._imagePayloads.set('six', { kind: 'sixel', s: 'SIXELPAYLOAD' })
+  const placement = { key: 'six', x: 0, cellsW: 20, cellsH: 3, top: true }
+
+  // Frame 1: the loading placeholder sits on the image's own top row, so the
+  // payload has to be painted over it.
+  const loading = new Screen(80, 24)
+  loading.text(0, 3, 'PLACEHOLDER ROW', null)
+  loading.setImageRow(3, placement)
+  t.paint(loading)
+  const first = t.getOut()
+  ok('the payload paints over the placeholder',
+    first.indexOf('SIXELPAYLOAD') > first.indexOf('PLACEHOLDER ROW'))
+
+  // Frame 2: the render landed and the placeholder is gone. Rows 3-5 are
+  // rewritten as the blank cells the renderer reserves, and that rewrite
+  // destroys the pixels — the payload has to follow it.
+  const resolved = new Screen(80, 24)
+  resolved.setImageRow(3, placement)
+  t.paint(resolved)
+  const second = t.getOut().slice(first.length)
+  ok('a rewrite of the image rows re-emits the payload', second.includes('SIXELPAYLOAD'))
+  ok('the re-emitted payload follows the rewrite',
+    second.indexOf('SIXELPAYLOAD') > second.indexOf('\x1b[4;1H'))
+  t.resetOut()
+
+  // Frame 3: nothing moved. The pixels are already on screen, so the rows must
+  // be left alone — rewriting them would erase the image again.
+  t.paint(resolved)
+  ok('a stationary image gets no row rewrite', !t.getOut().includes('\x1b[4;1H'))
+  ok('a stationary image gets no payload resend', !t.getOut().includes('SIXELPAYLOAD'))
+}
+
+{
+  // A shrinking image vacates rows that still show its old pixels, and there is
+  // no sixel delete to send — the vacated rows must be rewritten as text.
+  const t = fakeTerminal()
+  t.caps = { kitty: false, iterm2: false, sixel: true, cellW: 8, cellH: 16 }
+  t._imagePayloads.set('six', { kind: 'sixel', s: 'SIXELPAYLOAD' })
+  const tall = new Screen(80, 24)
+  tall.setImageRow(3, { key: 'six', x: 0, cellsW: 20, cellsH: 4, top: true })
+  t.paint(tall)
+  t.resetOut()
+  const short = new Screen(80, 24)
+  short.setImageRow(3, { key: 'six', x: 0, cellsW: 20, cellsH: 2, top: true })
+  t.paint(short)
+  const out = t.getOut()
+  ok('a shrinking image clears the rows it vacated', out.includes('\x1b[7;1H'))
+  ok('a shrinking image re-emits its payload', out.includes('SIXELPAYLOAD'))
+}
+
+{
+  // Two different images can end up on the same rows (a scroll that puts a new
+  // message where the old one was). The old pixels are the new image's problem
+  // to solve: the new payload must be sent even though its own position is
+  // unchanged.
+  const t = fakeTerminal()
+  t.caps = { kitty: false, iterm2: false, sixel: true, cellW: 8, cellH: 16 }
+  t._imagePayloads.set('a', { kind: 'sixel', s: 'PAYLOAD-A' })
+  t._imagePayloads.set('b', { kind: 'sixel', s: 'PAYLOAD-B' })
+  const first = new Screen(80, 24)
+  first.setImageRow(3, { key: 'a', x: 0, cellsW: 20, cellsH: 3, top: true })
+  t.paint(first)
+  t.resetOut()
+  const second = new Screen(80, 24)
+  second.setImageRow(3, { key: 'b', x: 0, cellsW: 20, cellsH: 3, top: true })
+  t.paint(second)
+  const out = t.getOut()
+  ok('a replacement image overwrites the old pixels', out.includes('\x1b[4;1HPAYLOAD-B'))
+  ok('a replacement image does not resurrect the old payload', !out.includes('PAYLOAD-A'))
+}
+
+{
+  // Kitty keeps its own image registry, so a text rewrite of the image's rows
+  // only needs the placement refreshed, not the pixel data resent.
+  const t = fakeTerminal()
+  t.caps = { kitty: true, iterm2: false, sixel: false, cellW: 8, cellH: 16 }
+  t._imagePayloads.set('k', { kind: 'kitty', b64: 'QUJD', bytes: 3 })
+  const placement = { key: 'k', x: 2, cellsW: 10, cellsH: 3, top: true }
+  const loading = new Screen(80, 24)
+  loading.text(0, 3, 'PLACEHOLDER ROW', null)
+  loading.setImageRow(3, placement)
+  t.paint(loading)
+  t.resetOut()
+  const resolved = new Screen(80, 24)
+  resolved.setImageRow(3, placement)
+  t.paint(resolved)
+  const out = t.getOut()
+  ok('kitty re-places after a rewrite of its rows', out.includes(kittyPlacement(1, 2, 3)))
+  ok('kitty does not retransmit the pixel data', !out.includes('a=T,'))
+}
+
+{
   const t = fakeTerminal()
   t.caps = { kitty: true, iterm2: false, sixel: false, cellW: 8, cellH: 16 }
   t.started = true
