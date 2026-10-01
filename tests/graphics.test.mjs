@@ -2,6 +2,11 @@
 // image encoders, markdown extensions, and the mermaid provider chain.
 // Run: node tests/graphics.test.mjs  (no dsh environment required)
 import { decodeKey } from '../lib/term.js'
+import { loadMermaidEngine } from '../lib/mermaid-ascii.js'
+
+// The engine is module-shared: awaiting it here makes the real import cost a
+// one-time line at the top instead of a race inside the fence assertions.
+await loadMermaidEngine()
 
 let failed = 0
 const eq = (name, actual, expected) => {
@@ -276,6 +281,27 @@ function fakeTerminal() {
 }
 
 {
+  // An image re-rendered narrower keeps every one of its rows but vacates the
+  // cells inside them, and there is no sixel delete that could pick those cells
+  // up — only a text write clears pixels. The regression it guards: coverage was
+  // keyed on image + row, so a narrower image still looked like it covered its
+  // rows and the old pixels stayed down its right hand edge.
+  const t = fakeTerminal()
+  t.caps = { kitty: false, iterm2: false, sixel: true, cellW: 8, cellH: 16 }
+  t._imagePayloads.set('six', { kind: 'sixel', s: 'SIXELPAYLOAD' })
+  const wide = new Screen(80, 24)
+  wide.setImageRow(2, { key: 'six', x: 0, cellsW: 20, cellsH: 3, top: true })
+  t.paint(wide)
+  t.resetOut()
+  const narrow = new Screen(80, 24)
+  narrow.setImageRow(2, { key: 'six', x: 0, cellsW: 10, cellsH: 3, top: true })
+  t.paint(narrow)
+  const out = t.getOut()
+  ok('a narrower image rewrites the rows it kept', out.includes('[3;1H') && out.includes('[4;1H') && out.includes('[5;1H'))
+  ok('a narrower image re-emits its payload', out.includes('[3;1HSIXELPAYLOAD'))
+}
+
+{
   // A shrinking image vacates rows that still show its old pixels, and there is
   // no sixel delete to send — the vacated rows must be rewritten as text.
   const t = fakeTerminal()
@@ -291,6 +317,28 @@ function fakeTerminal() {
   const out = t.getOut()
   ok('a shrinking image clears the rows it vacated', out.includes('\x1b[7;1H'))
   ok('a shrinking image re-emits its payload', out.includes('SIXELPAYLOAD'))
+}
+
+{
+  // Rows can be reserved before the render they need has landed: the transcript
+  // paints the moment the window scrolls, the host encodes the payload a moment
+  // later. Treating a placement whose position never changed as "already on
+  // screen" would then leave its cells blank for good. The regression it guards:
+  // the frame that reserved them had nothing to send, the next frame saw an
+  // unmoved image and skipped it forever.
+  const t = fakeTerminal()
+  t.caps = { kitty: false, iterm2: false, sixel: true, cellW: 8, cellH: 16 }
+  const s = new Screen(80, 24)
+  s.setImageRow(2, { key: 'six', x: 0, cellsW: 20, cellsH: 3, top: true })
+  t.paint(s)
+  ok('a payload that has not landed sends nothing', !t.getOut().includes('SIXELPAYLOAD'))
+  t.resetOut()
+  t._imagePayloads.set('six', { kind: 'sixel', s: 'SIXELPAYLOAD' })
+  t.paint(s)
+  ok('a late payload is emitted into its rows', t.getOut().includes('[3;1HSIXELPAYLOAD'))
+  t.resetOut()
+  t.paint(s)
+  ok('once sent, a stationary payload is left alone', !t.getOut().includes('SIXELPAYLOAD'))
 }
 
 {
@@ -418,6 +466,53 @@ eq('contentImages ignores text and partial refs', contentImages([
   app.setImageResult('bad', { state: 'error', error: 'decode failed' })
   const lines = app._blockLines(app.blocks[0], 76)
   ok('error state renders a failed line', lines.some((l) => (l.segs ?? []).some((s) => s.text.includes('image render failed'))))
+}
+
+{
+  // An image whose top rows scroll above the window keeps its lower rows on
+  // screen. Only those rows are reserved then, and the payload for them has to
+  // be a crop of the same source — placing the whole image would draw its
+  // scrolled-away rows back over the window. The regression it guards: only a
+  // group's own first row carries a placement, so once that row was above the
+  // window the visible part of the image had no placement at all and no pixels
+  // ever arrived.
+  const t = fakeTerminal()
+  t.caps = { kitty: false, iterm2: false, sixel: true, cellW: 8, cellH: 16 }
+  const app = new App(t, {})
+  app.titleScreen = false
+  app.graphicsProtocol = 'sixel'
+  const crops = []
+  app.onImageRequest = (src) => {
+    crops.push(src.cropCells ?? 0)
+    t._imagePayloads.set(src.key, { kind: 'sixel', s: 'CROP' + (src.cropCells ?? 'FULL') })
+  }
+  app.addUser('看图', { images: [{ kind: 'bytes', key: 'k1', bytes: Buffer.alloc(1) }] })
+  app.setImageResult('k1', { state: 'done', protocol: 'sixel', cellsW: 6, cellsH: 3 })
+  for (let i = 0; i < 20; i++) app.addSystem('later line ' + i)
+
+  // Scroll from the bottom up: the image sits at the top of the transcript, so
+  // its first row is the first thing to leave the window.
+  let screen = null
+  for (let sc = 1; sc <= 80 && crops.length === 0; sc++) {
+    app.scroll = sc
+    t.resetOut()
+    t.paint(app.render())
+    screen = app.render()
+  }
+  const clip = crops[0]
+  const img = screen.images[0]
+  ok('the clipped band asks for a crop of the source', clip > 0)
+  ok('the visible rows are still reserved', img && img.cellsH === 3 - clip)
+  eq('the crop is drawn at the rows left on screen', t.getOut().includes('[' + (img.y + 1) + ';' + (img.x + 1) + 'H' + 'CROP' + clip), true)
+  ok('the full payload is not drawn over the window', !t.getOut().includes('CROPFULL'))
+  // Scrolling back to the whole image stops showing the crop, and two frames
+  // later the variant it encoded has to be gone: a scroll sweeps through one
+  // offset per line, and a payload kept per offset would pile up in memory.
+  app.scroll = 500
+  app.render()
+  app.render()
+  const live = [...app._imageCrops.values()].reduce((n, set) => n + set.size, 0)
+  eq('a cropped variant is released once the frame stops showing it', live, 0)
 }
 
 console.log('')
@@ -563,17 +658,41 @@ test_mermaid: {
   block.streaming = false
   block.rev++
   let lines = app._blockLines(block, 76)
-  ok('mermaid fence requests a render', requests.length === 1 && requests[0].code.includes('graph TD'))
+  ok('mermaid fence waits on the native-art engine',
+    requests.length === 0 && lines.some((l) => (l.segs ?? []).some((s) => s.text.includes('rendering mermaid'))))
+  // The engine is module-shared, so one macrotask settles it for every app.
+  await new Promise((r) => setTimeout(r, 0))
+  lines = app._blockLines(block, 76)
+  const artRows = lines.map((l) => (l.segs ?? []).map((s) => s.text).join(''))
+  ok('a drawable grammar renders as native art',
+    requests.length === 0 && artRows.some((r) => r.includes('┌')) && artRows.some((r) => r.includes('│ A │')),
+    JSON.stringify(artRows))
+
+  // A grammar the engine does not draw still goes to the provider chain.
+  const chained = new App({ cols: 80, rows: 24, on() {} })
+  chained.onMermaidRequest = (code, key) => requests.push({ code, key })
+  chained.startAssistant()
+  chained.streamChunk({ type: 'text-delta', text: '```mermaid\njourney\n  title My day\n```' })
+  const chainedBlock = chained.blocks[0]
+  chainedBlock.streaming = false
+  chainedBlock.rev++
+  lines = chained._blockLines(chainedBlock, 76)
+  ok('an undrawable grammar shows the engine placeholder', requests.length === 0
+    && lines.some((l) => (l.segs ?? []).some((s) => s.text.includes('rendering mermaid'))))
+  await new Promise((r) => setTimeout(r, 0))
+  lines = chained._blockLines(chainedBlock, 76)
+  ok('an undrawable grammar enters the provider chain',
+    requests.length === 1 && requests[0].code.includes('journey'))
   ok('mermaid loading placeholder', lines.some((l) => (l.segs ?? []).some((s) => s.text.includes('rendering mermaid'))))
   // Fallback: the provider chain failed — the source renders highlighted.
-  app.setMermaidResult(requests[0].key, { state: 'fallback' })
-  lines = app._blockLines(block, 76)
-  ok('mermaid fallback renders the source', lines.some((l) => (l.segs ?? []).some((s) => s.text.includes('graph TD'))))
+  chained.setMermaidResult(requests[0].key, { state: 'fallback' })
+  lines = chained._blockLines(chainedBlock, 76)
+  ok('mermaid fallback renders the source', lines.some((l) => (l.segs ?? []).some((s) => s.text.includes('journey'))))
   // Done: delegates to the image pipeline under the derived image key.
   const imageKey = requests[0].key.replace('mermaid:', 'mermaid-img:')
-  app.setImageResult(imageKey, { state: 'done', protocol: 'halfblock', cellsW: 4, cellsH: 2, segLines: [[{ text: '▀', style: { fg: 'ffffff', bg: '000000' } }], [{ text: '▀', style: { fg: 'ffffff', bg: '000000' } }]] })
-  app.setMermaidResult(requests[0].key, { state: 'done', imageKey })
-  lines = app._blockLines(block, 76)
+  chained.setImageResult(imageKey, { state: 'done', protocol: 'halfblock', cellsW: 4, cellsH: 2, segLines: [[{ text: '▀', style: { fg: 'ffffff', bg: '000000' } }], [{ text: '▀', style: { fg: 'ffffff', bg: '000000' } }]] })
+  chained.setMermaidResult(requests[0].key, { state: 'done', imageKey })
+  lines = chained._blockLines(chainedBlock, 76)
   ok('mermaid done renders the diagram rows', lines.filter((l) => (l.segs ?? []).some((s) => s.text === '▀')).length === 2)
 }
 test_markdown_image_data_url: {
