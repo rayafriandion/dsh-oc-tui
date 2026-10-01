@@ -1,6 +1,6 @@
 {
   "name": "dsh-oc-tui",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "type": "module",
   "description": "A terminal UI (TUI) for DeepSeek Harness — an opencode-inspired chat client that boots as a dsh profile app plugin. ｜ DeepSeek Harness 的终端界面（TUI），受 opencode 启发，以 dsh profile 应用插件形式启动。",
   "keywords": [
@@ -26,7 +26,7 @@
   "license": "LGPL-3.0-or-later",
   "scripts": {
     "test": "node tests/smoke.test.mjs && node tests/render.test.mjs && node tests/rewind.test.mjs && node tests/std.test.mjs && node tests/esc-questions.test.mjs && node tests/deadline.test.mjs && node tests/secret-prompt.test.mjs",
-    "check": "node --check lib/index.js && node --check lib/ui.js && node --check lib/term.js && node --check lib/metrics.js && node --check lib/interrupt.js && node --check lib/web-settings.js && node --check lib/updates.js && node --check lib/rewind.js && node --check lib/bridge.js && node --check lib/facet.js && node --check lib/std/adapt.js && node --check lib/std/presentation.js && node --check lib/std/command-list.js && node --check lib/std/commands.js && node --check bin/dsh-oc-tui.js"
+    "check": "node --check lib/index.js && node --check lib/ui.js && node --check lib/term.js && node --check lib/metrics.js && node --check lib/interrupt.js && node --check lib/web-settings.js && node --check lib/updates.js && node --check lib/rewind.js && node --check lib/bridge.js && node --check lib/facet.js && node --check lib/std/adapt.js && node --check lib/std/presentation.js && node --check lib/std/command-list.js && node --check lib/std/commands.js && node --check bin/dsh-oc-tui.js && node --check bin/apply-update.cjs"
   },
   "main": "lib/index.js",
   "exports": {
@@ -65,22 +65,54 @@
     "@dsh-std/ui": "0.1.1-rc.1"
   },
   "peerDependenciesMeta": {
-    "@deepseek-ai/cordis": { "optional": false },
-    "@deepseek-ai/dsh-agent": { "optional": true },
-    "@deepseek-ai/dsh-agent-loop": { "optional": true },
-    "@deepseek-ai/dsh-agent-presets": { "optional": true },
-    "@deepseek-ai/dsh-commands": { "optional": true },
-    "@deepseek-ai/dsh-cmdline": { "optional": true },
-    "@deepseek-ai/dsh-llm": { "optional": true },
-    "@deepseek-ai/dsh-session": { "optional": true },
-    "@deepseek-ai/dsh-session-persistence": { "optional": true },
-    "@deepseek-ai/dsh-user-approval": { "optional": true },
-    "@deepseek-ai/dsh-user-questions": { "optional": true },
-    "@deepseek-ai/schemastery": { "optional": false },
-    "@dsh-std/command": { "optional": true },
-    "@dsh-std/presentation": { "optional": true },
-    "@dsh-std/sdk": { "optional": true },
-    "@dsh-std/ui": { "optional": true }
+    "@deepseek-ai/cordis": {
+      "optional": false
+    },
+    "@deepseek-ai/dsh-agent": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-agent-loop": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-agent-presets": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-commands": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-cmdline": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-llm": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-session": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-session-persistence": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-user-approval": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-user-questions": {
+      "optional": true
+    },
+    "@deepseek-ai/schemastery": {
+      "optional": false
+    },
+    "@dsh-std/command": {
+      "optional": true
+    },
+    "@dsh-std/presentation": {
+      "optional": true
+    },
+    "@dsh-std/sdk": {
+      "optional": true
+    },
+    "@dsh-std/ui": {
+      "optional": true
+    }
   },
   "dsh": {
     "bundle": {

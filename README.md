@@ -73,7 +73,16 @@ dsh --version
 pnpm --version
 ```
 
-**Compatibility.** Verified against dsh `0.1.2-rc.1` (and `0.1.1-rc.2`). DSH renamed parts of the session API in 0.1.2 — `Session.events` became `snapshotEvents()` — and this plugin reads whichever accessor the host provides, so one build serves both lines.
+**Compatibility.** Verified against dsh `0.2.0-rc.2` and `0.1.2-rc.1` (`0.1.1-rc.2` before that). DSH renamed parts of the session API in 0.1.2 — `Session.events` became `snapshotEvents()` — and this plugin reads whichever accessor the host provides, so one build serves both lines.
+
+**dsh (the harness) 0.2.0 is a breaking update — upgrade this plugin first.** From dsh `0.2.0-rc.1` the agent-preset packages were split: the roster provider `@deepseek-ai/dsh-agent-presets` (which shipped its own presets) became `@deepseek-ai/dsh-agent-preset-registry`, and a new `@deepseek-ai/dsh-agent-preset` package is only a *declarative* preset row that injects the service the registry provides. A TUI older than `0.1.5` names the old provider, and dsh reports it at every boot:
+
+```
+dsh: disabling profile plugin row "agent-presets": Plugin @deepseek-ai/dsh-agent-presets@0.1.1-rc.2 is
+incompatible with dsh 0.2.0-rc.2: peerDependencies {…}. Running it may cause crashes or data loss.
+```
+
+The TUI still starts, but Settings → Default preset loses its roster (the row is hidden once no provider mounts it). Updating `dsh-oc-tui` to `0.1.5` or later removes the report: this bundle mounts no roster row at all, because no single package name works on both lines — the old one warns on dsh 0.2.0, the singular never activates, and the registry activates empty unless a host declares presets. A dsh 0.2.0 profile that wants a roster mounts the registry plus its own preset declarations, exactly as `dsh-web-app` does. Nothing about your sessions changes in either direction; `cordis.patch.yml` documents the same decision next to the rows.
 
 ## Install
 
@@ -146,7 +155,7 @@ Verify without booting:
 dsh --profile tui --dump-config
 ```
 
-The dump shows a `# == dsh-oc-tui` layer containing `tui-startup`, `tui-app`, the `agent-presets` roster row, and the `tool-ask-user` row.
+The dump shows a `# == dsh-oc-tui` layer containing `tui-startup`, `tui-app`, and the `tool-ask-user` row — three rows, no agent-preset one (see the compatibility note above).
 
 ## Quick start
 
@@ -277,11 +286,11 @@ Figures come from the same sources as the Web UI, projection-first with the plug
 
 `Ctrl+P` opens a settings menu over the same host settings namespaces as the Web UI, persisted through `ctx.settings` to `$DSH_HOME/settings.yaml`. A left menu splits it into three tabs (`Tab` or click to switch):
 
-- **Main** — General (busy-Enter behaviour, default agent preset, permission preset), Sessions (new session, manage sessions), System (provider API hints, update-manager shortcut, settings file path).
+- **Main** — General (busy-Enter behaviour, permission preset), Sessions (new session, manage sessions), System (provider API hints, update-manager shortcut, settings file path).
 - **Model** — the default provider/model/reasoning choice, then one group per provider holding its URL, API key, and model list. Pressing `Enter` on **Models** fetches the provider's advertised catalog (`ctx.llm.discoverModels`) and opens a checkbox window; pressing `Enter` on a listed model makes it the default route.
 - **Update** — see [In-app updates](#in-app-updates).
 
-Only providers you actually added (present in your user settings layer) are listed; a provider that was never added stays hidden. The default agent preset comes from the roster the profile mounts (the shipped presets plus any you authored under `$DSH_HOME/.agent-presets`) — note that a TUI session composes process-wide from the base, so the stored default applies where a session is created from a preset. Web-UI-only options (`ui-theme` appearance, `locale`) are not shown because they have no effect in the TUI.
+Only providers you actually added (present in your user settings layer) are listed; a provider that was never added stays hidden. **Default preset** is shown only when the profile mounts an agent-preset roster, because the choice list is that roster — and this plugin deliberately mounts none (see the compatibility note above), so on a stock `tui` profile the row is absent rather than empty. Where a roster *is* mounted, note that a TUI session composes process-wide from the base, so the stored default applies where a session is created from a preset. Web-UI-only options (`ui-theme` appearance, `locale`) are not shown because they have no effect in the TUI.
 
 ### In-app updates
 
@@ -292,18 +301,20 @@ Only providers you actually added (present in your user settings layer) are list
 - `No stable release — pick from Versions` — the registry has no stable release yet; pick one manually.
 - `Install damaged — reinstall below` — the global dsh tree is in a mixed old/new state; reinstall it.
 
-`Enter` on a package's **Versions** row opens the full registry list (newest first, `[latest]`/`[next]`/other tags and `(installed)` colour-coded) where you can pick any version — including pre-releases — for a y/n-confirmed install through `npm`/`dsh plugin`. `Check now` re-reads the registry; `Startup check` toggles the silent boot-time stable-release check. Installs run in the background, never block the UI, and need a restart to apply.
+`Enter` on a package's **Versions** row opens the full registry list (newest first, `[latest]`/`[next]`/other tags and `(installed)` colour-coded) where you can pick any version — including pre-releases. A picked version is **downloaded first**: the tarball streams into `$DSH_HOME/updates` with live byte progress, `Esc` cancels mid-flight, and the sha512 registry hash is checked before the file is kept. Applying it is a **restart**: after the y/n confirm the TUI spawns a detached applier, exits, and that child installs from the staged tarball, verifies the on-disk version, and relaunches dsh in the same terminal with the same arguments (`--profile tui --resume …` included) and working directory.
+
+Version rows are tagged `[cached]` when that tarball is already on disk — a version you downloaded before (or rolled back from) needs no new download — and `[staged]` for the version waiting to be applied. A staged install also shows up on the Update tab as **Restart to apply x.y.z** (one `Enter`) and **Discard downloaded x.y.z**, and its state survives a crash: the row is only offered while the staged tarball actually exists. `Check now` re-reads the registry; `Startup check` toggles the silent boot-time stable-release check.
 
 <details>
-<summary><strong>Windows: why dsh installs are deferred to exit</strong></summary>
+<summary><strong>Why an update never installs while the TUI runs</strong></summary>
 
-On Windows, updating dsh while any dsh process runs can *silently corrupt* the global install: npm replaces the directory while the running process holds memory-mapped native DLLs, still exits 0, and the resulting old/new hybrid tree fails to boot. The updater guards this in three layers:
+Updating a package that a live `dsh` process has loaded can *silently corrupt* it: on Windows the process holds memory-mapped native DLLs, npm's directory replace fails, and the result is an old/new hybrid tree — while npm still exits 0. The crash of 2026-09-04 happened exactly that way. Migrating the whole flow to "download, then restart to apply" removed the window instead of narrowing it, on every platform:
 
-1. **dsh installs are deferred to TUI exit** — a detached helper waits for the TUI to close, runs the install, and records the outcome in `$DSH_HOME/tui-dsh-install.json`, which the Update page verifies on the next visit.
-2. **The on-disk version is compared** against the requested target after every direct install, so a silent corruption surfaces as an `install corrupt` toast with repair instructions.
-3. **An already-damaged install is flagged** in the Status row rather than reported as a bogus success.
+1. **Nothing is installed until this process is gone.** The download is only a file; the applier polls this pid, and the TUI refuses to start the restart while any *other* dsh process is alive.
+2. **The on-disk version decides success**, not npm's exit code. A mismatch is reported as `Install damaged — reinstall below` with repair instructions, never as a bogus success.
+3. **The staged tarball is kept**, so a rollback to any downloaded version is a verified cache hit through the same code path as an update.
 
-macOS/Linux have no DLL lock, but an install is refused while other dsh processes are running.
+The applier writes the outcome to `$DSH_HOME/tui-dsh-install.json`, which the Update page reads and drains on the next visit — so the result of an interrupted install is still reported.
 </details>
 
 ## How it works
@@ -403,7 +414,7 @@ More detail, in Chinese: [docs/用户手册.md](docs/用户手册.md).
 - Harness slash commands need a live session; on the title screen the TUI tells you to start one first.
 - Deferring a question with `Esc` does not cancel the tool call — it delegates, and with no other answerer the tool call fails. Per-question skip (as the Web UI composer offers) is not implemented.
 - `--resume`, Settings → Manage sessions, the context meter, and the stats strip depend on services mounted by `@deepseek-ai/dsh-base` (`sessionQuery`, `sessionProjections`); a hand-built profile must provide them. The `sessionStats` projection is a web-app-layer row, so the TUI folds those figures from the session log itself when no profile mounts it.
-- The deferred dsh install on Windows waits for the TUI that scheduled it, not for every dsh process on the machine — close other TUI windows (and `dsh web`) before it runs.
+- An update restart only waits for the TUI that scheduled it: the "no other dsh process" check runs *before* you confirm, so a `dsh web` window opened afterwards can still overlap the install. Close other dsh windows first.
 - Two `@dsh-std` presentation surfaces have no caller today, because the runtime protocol support is gated off (see [@dsh-std interop](#dsh-std-interop)). A standard `secret-input` request would open a masked prompt with `minLength`/`maxLength` bounds, and a standard `ApprovalRequest` is the only thing that populates the approval box's `Origin` / `Risk` / `Details` rows. Both paths are written and integration-tested; neither can be reached from a normal `dsh --profile tui` session, which is why the harness-shaped approval box shows only the action and the summary.
 
 ## Layout
@@ -416,17 +427,18 @@ lib/ui.js            responsive view model + renderer (includes the question mod
 lib/metrics.js       whole-session stats + token usage fold (web stats strip / tokenUsage port)
 lib/interrupt.js     Ctrl+C lifecycle state
 lib/web-settings.js  shared WebUI settings projection
-lib/updates.js       in-app update manager (npm registry + installs)
+lib/updates.js       in-app update manager (npm registry, download + staging, install verification)
 lib/markdown.js      markdown -> styled lines
 lib/util.js          text/display helpers
 lib/bridge.js        live-TUI registry the @dsh-std facet forwards through
 lib/facet.js         @dsh-std facet entry (interop shell; never starts the TUI)
 lib/std/             @dsh-std protocol adapters (adapt, presentation, commands, command-list)
 bin/dsh-oc-tui.js    convenience launcher for `dsh --profile tui`
+bin/apply-update.cjs detached applier: waits for the TUI to exit, installs the staged tarball, relaunches dsh
 install.sh           one-command installer (Linux/macOS)
 install.ps1          one-command installer (Windows)
 dsh-plugin.json      @dsh-std component manifest (discovery + preflight only)
-cordis.patch.yml     bundle patch layer (TUI rows, agent-presets roster, ask-user tool)
+cordis.patch.yml     bundle patch layer (TUI rows, ask-user tool; no agent-preset row, with the reason in a comment)
 docs/用户手册.md       Chinese user manual
 docs/dsh-std-接入说明.md  @dsh-std interop scope and constraints (Chinese)
 tests/smoke.test.mjs standalone smoke tests

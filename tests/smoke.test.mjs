@@ -2,12 +2,13 @@
 // Run: node tests/smoke.test.mjs  (no dsh environment required)
 import { fileURLToPath } from "node:url"
 import { dirname, join } from "node:path"
+import { readFileSync } from "node:fs"
 import { decodeKey, Screen, makeStyle, Terminal } from "../lib/term.js"
 import { App, THEME, noteFromContext, inputRows, cursorAtVisual, inboxMessageText } from "../lib/ui.js"
 import { InterruptState } from "../lib/interrupt.js"
 import { SessionMetrics, cacheHitPercent, mergeSessionStats } from "../lib/metrics.js"
 import { SETTINGS_MENU, loadModelSettings, loadProviderModels, loadWebSettings, saveWebSetting } from "../lib/web-settings.js"
-import { DSH_PACKAGE, TUI_PACKAGE, parseRegistryView, isPrerelease, coreSegments, latestStable, updateStatus, compareVersions, buildUpdateItems, buildVersionItems, resolveActiveProfile, stderrSummary, dshLockEntries, installResultFrom, deferredInstallSpec, installMarkerPath, readInstallMarker, writeInstallMarker } from "../lib/updates.js"
+import { DSH_PACKAGE, TUI_PACKAGE, parseRegistryView, isPrerelease, coreSegments, latestStable, updateStatus, compareVersions, buildUpdateItems, buildVersionItems, resolveActiveProfile, stderrSummary, dshLockEntries, installResultFrom, restartPlan, restartSpec, restartPlanPath, writeRestartPlan, applierPath, tarballFileName, tarballCachePath, formatBytes, formatDownloadProgress, checkIntegrity, readStagedInstall, writeStagedInstall, clearStagedInstall, installMarkerPath, readInstallMarker, writeInstallMarker } from "../lib/updates.js"
 import { renderMarkdown } from "../lib/markdown.js"
 import { displayWidth, wrapText, roughTokens, truncateWidth, shortenPath, contentText, timeString, toolSummary, detectImageMediaType, imageMediaTypeFromName, decodeDataUrl, localImagePath, runeWidth, userContentBlocks } from "../lib/util.js"
 
@@ -483,24 +484,49 @@ eq("install result treats timeout as failed", installResultFrom({ code: null, si
 eq("install failure carries stderr", installResultFrom({ code: 1, stderr: "EPERM boom" }, null, "0.1.2-rc.1").stderr, "EPERM boom")
 ok("corrupt result tells user to repair", /repair|reinstall/i.test(installResultFrom({ code: 0, stderr: "" }, { version: "0.1.1-rc.2" }, "0.1.2-rc.1").reason))
 
-// deferredInstallSpec: the exit-time installer is a detached plain-node child
-// (`node -e <script> <parentPid> <npm…> <requested> <marker>`): it polls the
-// parent until it exits, runs the npm install, and records the outcome in the
-// marker file for the next boot to verify.
-const spec = deferredInstallSpec("0.1.2-rc.1", 4242, { command: "node", args: ["npm-cli.js"] }, "C:/Users/u/.dsh/tui-dsh-install.json")
-eq("deferred spec command passthrough", spec.command, "node")
-eq("deferred spec passes -e script first", spec.args[0], "-e")
-ok("deferred spec script spawns and records", spec.args[1].includes("child_process") && spec.args[1].includes("writeFileSync") && spec.args[1].includes("process.kill"))
-const specTail = spec.args.slice(2)
-eq("deferred spec argv order parent/npm/version/marker", JSON.stringify([specTail[0], specTail[1], specTail[2], specTail[specTail.length - 2], specTail[specTail.length - 1]]),
-  JSON.stringify(["4242", "node", "npm-cli.js", "0.1.2-rc.1", "C:/Users/u/.dsh/tui-dsh-install.json"]))
-ok("deferred spec npm args preserved", specTail.includes("install") && specTail.includes("-g") && specTail.includes("@deepseek-ai/dsh@0.1.2-rc.1"))
-eq("deferred spec detached and unrefed", JSON.stringify([spec.options.detached, spec.options.stdio, spec.options.windowsHide]), JSON.stringify([true, "ignore", true]))
-
-// The script reads argv from index 1 — with `node -e <script> A B`, the
-// script/-e do not occupy argv slots, so argv = [node, A, B] (slice(2) would
-// drop the parent pid). Regressed by the real-process E2E on 2026-09-04.
-ok("deferred script argv starts at index 1", spec.args[1].includes("process.argv.slice(1)"))
+// restartPlan / restartSpec: applying a download is a *restart*. The TUI spawns
+// a detached plain-node child (`node bin/apply-update.cjs <plan.json>`) before
+// it exits; that child waits for this pid to disappear, installs from the
+// staged tarball, verifies the on-disk version, writes the marker, and
+// relaunches dsh in the same terminal. Detached so it outlives this process,
+// stdio inherited so the install runs in the user's own terminal.
+const plan = restartPlan({
+  pkg: "dsh",
+  version: "0.1.2-rc.1",
+  tarball: "C:/Users/u/.dsh/updates/deepseek-ai-dsh-0.1.2-rc.1.tgz",
+  profile: "tui",
+  cwd: "C:\\work",
+  verifyPath: "C:/p/node_modules/@deepseek-ai/dsh/package.json",
+  marker: "C:/marker.json",
+  npm: { command: "node", args: ["npm-cli.js"] },
+  dsh: { command: "node", args: ["dsh.js"] },
+  dshShim: "C:/bin/dsh.cmd",
+  dshArgs: ["--profile", "tui"],
+  relaunch: { command: "node", args: ["dsh.js", "--profile", "tui"] },
+  parentPid: 4242,
+})
+eq("plan package name for dsh", plan.packageName, DSH_PACKAGE)
+eq("plan tarball passthrough", plan.tarball, "C:/Users/u/.dsh/updates/deepseek-ai-dsh-0.1.2-rc.1.tgz")
+eq("plan marker passthrough", plan.marker, "C:/marker.json")
+eq("plan npm passthrough", plan.npm, { command: "node", args: ["npm-cli.js"] })
+eq("plan relaunch args passthrough", plan.relaunch.args, ["dsh.js", "--profile", "tui"])
+eq("plan parent pid passthrough", plan.parentPid, 4242)
+eq("plan package name for tui", restartPlan({ pkg: "tui", version: "0.1.4", tarball: "t.tgz" }).packageName, TUI_PACKAGE)
+eq("plan falls back to the shipped marker", typeof restartPlan({ pkg: "dsh", version: "1.0.0", tarball: "t.tgz" }).marker, "string")
+const spec = restartSpec(plan, "C:/c/restart-plan.json")
+eq("restart spec command is node", spec.command, process.execPath)
+eq("restart spec argv is applier + plan file", spec.args.length, 2)
+ok("restart spec runs the shipped applier", /bin[\\/]apply-update\.cjs$/.test(spec.args[0]) && spec.args[0] === applierPath())
+eq("restart spec points at the plan file", spec.args[1], "C:/c/restart-plan.json")
+ok("restart spec defaults to the cache plan file", restartSpec(plan).args[1] === restartPlanPath() && /restart-plan\.json$/.test(restartPlanPath()))
+const planFs = {
+  files: new Map(),
+  mkdirSync() {},
+  writeFileSync(p, text) { this.files.set(p, String(text)) },
+}
+eq("the plan file round trips the staged record", JSON.parse(writeRestartPlan(planFs, "C:/c/restart-plan.json", plan) === true ? planFs.files.get("C:/c/restart-plan.json") : "{}").version, "0.1.2-rc.1")
+eq("an unwritable plan file reports false", writeRestartPlan({ ...planFs, writeFileSync() { throw new Error("EPERM") } }, "C:/c/restart-plan.json", plan), false)
+eq("restart spec detached with inherited stdio", JSON.stringify([spec.options.detached, spec.options.stdio, spec.options.windowsHide]), JSON.stringify([true, "inherit", false]))
 
 // The marker lives in the harness home (DSH_HOME is already the .dsh root).
 ok("install marker path inside dsh home", /tui-dsh-install\.json$/.test(installMarkerPath()) && !/[\\/]\.dsh[\\/].*\.dsh/.test(installMarkerPath()))
@@ -516,11 +542,87 @@ const markerFs = {
 writeInstallMarker(markerFs, "C:/m", { requested: "0.1.2-rc.1", code: 0 })
 const roundTrip = readInstallMarker(markerFs, "C:/m")
 eq("marker round trip keeps requested and code", JSON.stringify([roundTrip.requested, roundTrip.code]), JSON.stringify(["0.1.2-rc.1", 0]))
+// The marker is shared by both packages: the applier records which one it
+// installed so the next boot checks the right tree on disk.
+eq("marker defaults to the dsh package", roundTrip.pkg, "dsh")
+writeInstallMarker(markerFs, "C:/m", { requested: "0.1.4", code: 0, pkg: "tui" })
+eq("marker carries a tui install", readInstallMarker(markerFs, "C:/m").pkg, "tui")
 eq("marker drains on read", markerFs.existsSync(), false)
 eq("marker missing is null", readInstallMarker(markerFs, "C:/m"), null)
 markerFs.files["C:/m"] = "not json"
 eq("marker malformed tolerated and drained", readInstallMarker(markerFs, "C:/m"), null)
 eq("marker drained after malformed", markerFs.existsSync(), false)
+
+// ---- in-app download, staged install, restart to apply -------------------
+// The update path downloads the registry tarball itself (progress, integrity)
+// and stages it under $DSH_HOME/updates; the install happens only after a
+// restart, applied by the detached applier.
+
+eq("tarball file name flattens a scoped package", tarballFileName(DSH_PACKAGE, "0.2.0-rc.2"), "deepseek-ai-dsh-0.2.0-rc.2.tgz")
+eq("tarball file name keeps an unscoped package", tarballFileName(TUI_PACKAGE, "0.1.4"), "dsh-oc-tui-0.1.4.tgz")
+ok("cache path sits in the updates cache", /updates[\\/]deepseek-ai-dsh-0\.2\.0-rc\.2\.tgz$/.test(tarballCachePath(DSH_PACKAGE, "0.2.0-rc.2")))
+ok("cache prefixes do not collide across packages", !tarballCachePath(DSH_PACKAGE, "1.0.0").includes(TUI_PACKAGE))
+
+eq("formatBytes zero", formatBytes(0), "0 B")
+eq("formatBytes under a KiB", formatBytes(512), "512 B")
+eq("formatBytes KiB", formatBytes(2048), "2.0 KB")
+eq("formatBytes MiB", formatBytes(5 * 1024 * 1024), "5.0 MB")
+eq("formatBytes drops the decimal above 100", formatBytes(120 * 1024 * 1024), "120 MB")
+eq("formatBytes clamps junk", formatBytes(-5), "0 B")
+
+eq("progress with a known total", formatDownloadProgress(1024 * 1024, 4 * 1024 * 1024), { text: "1.0 MB / 4.0 MB · 25%", percent: 25 })
+eq("progress clamps past the total", formatDownloadProgress(8, 4), { text: "8 B / 4 B · 100%", percent: 100 })
+eq("progress without a total reports bytes only", formatDownloadProgress(4096, null), { text: "4.0 KB", percent: null })
+eq("progress tolerates a junk total", formatDownloadProgress(10, "abc").percent, null)
+
+eq("integrity accepts a matching sha512", checkIntegrity("abc", "sha512-abc"), { ok: true, checked: true })
+eq("integrity flags a mismatch", checkIntegrity("abc", "sha512-def").ok, false)
+eq("integrity skips an unknown algorithm", checkIntegrity("abc", "sha1-abc"), { ok: true, checked: false })
+eq("integrity skips a missing value", checkIntegrity("abc", null), { ok: true, checked: false })
+
+// The staged record: written after a download, read back by the Update page to
+// offer one Enter to restart and apply. A record whose tarball vanished must
+// not offer a restart that cannot work.
+const stagedFs = {
+  files: new Map(),
+  existsSync(p) { return this.files.has(p) },
+  readFileSync(p) { if (!this.files.has(p)) throw new Error("no file"); return this.files.get(p) },
+  writeFileSync(p, text) { this.files.set(p, String(text)) },
+  unlinkSync(p) { this.files.delete(p) },
+}
+stagedFs.files.set("C:/c/dsh.tgz", "tarball bytes")
+writeStagedInstall(stagedFs, "C:/c/staged.json", { pkg: "dsh", version: "0.1.4", tarball: "C:/c/dsh.tgz" })
+eq("staged record round trips", readStagedInstall(stagedFs, "C:/c/staged.json")?.version, "0.1.4")
+stagedFs.files.delete("C:/c/dsh.tgz")
+eq("staged record drains when the tarball is gone", readStagedInstall(stagedFs, "C:/c/staged.json"), null)
+stagedFs.files.set("C:/c/staged.json", "{not json")
+eq("staged record tolerates malformed json", readStagedInstall(stagedFs, "C:/c/staged.json"), null)
+stagedFs.files.set("C:/c/staged.json", JSON.stringify({ pkg: "nope", version: "1.0.0", tarball: "x.tgz" }))
+eq("staged record rejects an unknown package", readStagedInstall(stagedFs, "C:/c/staged.json"), null)
+stagedFs.files.set("C:/c/x.tgz", "tarball bytes")
+stagedFs.files.set("C:/c/staged.json", JSON.stringify({ pkg: "tui", version: "1.0.0", tarball: "C:/c/x.tgz" }))
+ok("staged record keeps a tui install", readStagedInstall(stagedFs, "C:/c/staged.json")?.version === "1.0.0")
+clearStagedInstall(stagedFs, "C:/c/staged.json")
+eq("cleared staged record reads back null", readStagedInstall(stagedFs, "C:/c/staged.json"), null)
+eq("an unwritable staged record reports false", writeStagedInstall({ ...stagedFs, writeFileSync() { throw new Error("EPERM") } }, "C:/c/staged.json", { pkg: "dsh", version: "1", tarball: "t" }), false)
+
+// Version rows advertise the download cache: a cached tarball makes a rollback
+// instant, and the staged version is the one a restart will apply.
+const cachedItems = buildVersionItems({ versions: ["0.1.4", "0.1.3"], distTags: {} }, "0.1.3", { cached: new Set(["0.1.4"]), staged: "0.1.4" })
+ok("version rows mark cached tarballs", cachedItems.find((item) => item.version === "0.1.4").tags.includes("cached"))
+ok("version rows mark the staged version", cachedItems.find((item) => item.version === "0.1.4").tags.includes("staged"))
+ok("version rows leave uncached versions unmarked", !cachedItems.find((item) => item.version === "0.1.3").tags.includes("cached"))
+ok("version rows accept a predicate", buildVersionItems({ versions: ["0.1.4"], distTags: {} }, null, { cached: (v) => v === "0.1.4" })[0].cached === true)
+ok("version rows work without options", buildVersionItems({ versions: ["0.1.4"], distTags: {} }, null)[0].tags.length === 0)
+
+// The Update page turns a staged install into a restart row plus a discard row,
+// only for the package that was downloaded.
+const stagedUpdateItems = buildUpdateItems({ ...updateFixture, staged: { pkg: "dsh", version: "0.1.3", tarball: "C:/c/dsh.tgz", packageName: DSH_PACKAGE } })
+const restartRow = stagedUpdateItems.find((item) => item.kind === "update-restart")
+eq("update page offers a restart for the staged package", JSON.stringify([restartRow?.pkg, restartRow?.label, restartRow?.value]), JSON.stringify(["dsh", "Restart to apply 0.1.3", "Enter restart"]))
+ok("update page offers to discard the staged download", stagedUpdateItems.some((item) => item.kind === "update-discard" && item.pkg === "dsh"))
+ok("update page has no restart row without a staged install", !buildUpdateItems(updateFixture).some((item) => item.kind === "update-restart"))
+ok("a staged tui install leaves the dsh block alone", !buildUpdateItems({ ...updateFixture, staged: { pkg: "tui", version: "0.1.4", tarball: "t" } }).some((item) => item.kind === "update-restart" && item.pkg === "dsh"))
 
 // A deferred install that failed (non-zero exit) surfaces as a note on the
 // dsh Status row, warning tone, without claiming the install is damaged.
@@ -1493,5 +1595,22 @@ function gridDiff(grid, screen, cols, rows) {
 }
 
 console.log("")
+// ---- bundle patch ----
+// dsh 0.2.0 reports a row that names a peer-incompatible package as a
+// wall-of-text "may cause crashes or data loss" block at every boot, and a row
+// naming a package this dsh cannot resolve is skipped silently instead of
+// loading. Both ends of the agent-preset rename are therefore unusable as a
+// bundle row, so the patch mounts no roster at all — these assertions keep a
+// later edit from quietly reintroducing one.
+const PATCH = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "cordis.patch.yml"), "utf8")
+const patchRows = [...PATCH.matchAll(/^\s+- id: (\S+)[\t ]*\r?\n\s+name: '([^']+)'/gm)].map((m) => [m[1], m[2]])
+eq("bundle rows", patchRows, [
+  ["tui-startup", "dsh-oc-tui/startup"],
+  ["tui-app", "dsh-oc-tui"],
+  ["tool-ask-user", "@deepseek-ai/dsh-tool-ask-user"],
+])
+ok("the bundle names no pre-0.2.0 roster provider", !patchRows.some(([, name]) => name === "@deepseek-ai/dsh-agent-presets"))
+ok("the bundle names no declarative preset row", !patchRows.some(([, name]) => name === "@deepseek-ai/dsh-agent-preset"))
+
 if (failed > 0) { console.log(failed + " test(s) failed"); process.exit(1) }
 console.log("all smoke tests passed")
