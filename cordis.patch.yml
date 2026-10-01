@@ -15,18 +15,32 @@
         sidebar: true
         showReasoning: true
 
-    # The preset roster behind the Settings -> Default preset list.
-    # Sessions keep composing process-wide from the base (single-session TUI);
-    # this row only makes the roster and its settings namespace available.
-    - id: agent-presets
-      name: '@deepseek-ai/dsh-agent-presets'
-      config:
-        default: standard
-
     # The model-facing `ask_user_question` tool. dsh-base mounts the
-    # `user-questions` service but NOT this tool — the agent presets mount it,
-    # and a TUI session composes process-wide from the base rather than from a
-    # preset, so the row must be declared here or the tool is simply absent.
-    # lib/index.js answers the `user-questions/request` waterfall with a modal.
+    # `user-questions` service but NOT this tool, so the row must be declared
+    # here or the tool is simply absent. lib/index.js answers the
+    # `user-questions/request` waterfall with a modal.
     - id: tool-ask-user
       name: '@deepseek-ai/dsh-tool-ask-user'
+
+# There is deliberately no agent-preset row. The Settings -> Default preset list
+# reads the roster the profile mounts, and no single package name serves both dsh
+# lines:
+#
+#   * dsh 0.1.x: `@deepseek-ai/dsh-agent-presets` (plural) *is* the roster
+#     provider and ships its own presets. Naming it here is what 0.1.0-0.1.4 did.
+#   * dsh 0.2.0-rc.1 renamed the pieces: `@deepseek-ai/dsh-agent-presets` peers
+#     on the 0.1.x packages, so dsh *disables* the row at every boot with a
+#     wall-of-text incompatibility report ("may cause crashes or data loss"),
+#     while `@deepseek-ai/dsh-agent-preset` (singular) is only a declarative
+#     preset row that injects the service and never activates on its own, and
+#     `@deepseek-ai/dsh-agent-preset-registry` mounts an empty roster unless a
+#     host declares the presets.
+#
+# A row naming a package this dsh cannot resolve is skipped silently rather than
+# loaded, so the honest options were "always warn on the new line" (plural),
+# "never activate" (singular) or "activate empty" (registry). None of them
+# restores a roster a host-owned composition owns, so the bundle mounts none:
+# the TUI boots clean on both lines and Settings simply omits the Default preset
+# row (lib/web-settings.js hides a row whose namespace has no provider). A dsh
+# 0.2.0 profile that wants a roster mounts the registry plus its own preset
+# declarations, exactly as dsh-web-app does.
