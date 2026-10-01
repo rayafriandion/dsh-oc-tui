@@ -347,9 +347,9 @@ Images and mermaid diagrams render as real pixels. On boot the TUI probes the te
 
 - **Sources.** A pasted image (bytes are already in hand), a stored attachment on resume/replay (read back through the attachment store), a `data:` URL, and a standalone markdown image (`![alt](https://…)`), plus tool-result images such as screenshots.
 - **Budgets.** Images scale to fit the transcript width and a row cap (Settings → Graphics → Image height cap, default 20 rows); GIFs render their first frame.
-- **Mermaid.** A ` ```mermaid ` fence goes through the provider chain: local `mmdc` (mermaid-cli) if it is on `PATH`, otherwise the mermaid.ink service (10 s timeout, disk-cached) — which sends the diagram text to a third party, hence the setting. `Settings → Graphics → Mermaid rendering` offers `auto` / `local` / `off`; every failure degrades to highlighted source, never a broken frame.
+- **Mermaid.** A ` ```mermaid ` fence draws as **native box-drawing art** whenever the grammar is one the built-in engine knows (flowchart, sequence, class, state, ER, pie, mindmap, timeline, gitGraph) — text in the transcript, sharp at any font size, selectable and searchable, with emoji and CJK labels measured the way the terminal draws them. Only a grammar the engine does not draw falls back to the provider chain: local `mmdc` (mermaid-cli) if it is on `PATH`, otherwise the mermaid.ink service (10 s timeout, disk-cached) — which sends the diagram text to a third party, hence the setting. A diagram wider than the pane reports the width it needs and shows its source instead of a raster. `Settings → Graphics → Mermaid rendering` offers `auto` / `local` / `off`; `off` keeps every diagram as its highlighted source, and every failure degrades to source, never a broken frame.
 - **Settings.** `Graphics rendering` (`auto`/`off`), `No-protocol fallback` (`halfblock`/`chip`), `Image height cap (rows)`, `Mermaid rendering` (`auto`/`local`/`off`). Changes apply the moment they are saved.
-- **Dependencies.** Rendering is pure npm: `sharp` decodes and scales (prebuilt binaries on all three platforms), and the kitty/iTerm2/sixel encoders are part of the plugin. No external binaries are required; `mmdc` is optional.
+- **Dependencies.** Rendering is pure npm: `sharp` decodes and scales (prebuilt binaries on all three platforms), [`lovely-mermaid`](https://www.npmjs.com/package/lovely-mermaid) lays out mermaid diagrams as terminal text, and the kitty/iTerm2/sixel encoders are part of the plugin. No external binaries are required; `mmdc` is optional.
 
 ## @dsh-std interop
 
@@ -360,6 +360,9 @@ The package carries a [`dsh-plugin.json`](dsh-plugin.json) manifest and a facet 
 > 中文说明：[docs/dsh-std-接入说明.md](docs/dsh-std-接入说明.md) — 本插件在 `@dsh-std` 生态里扮演 **Host 与 Presentation 提供方**；facet 只是协议外壳，**不拥有 TUI 的生命周期**，双激活已由设计规避。**但当前上游下它一条协议都不发布**：Community v0.15 清单无法声明 supports，而 lifecycle 要求先声明才能暂存，因此 Phase B（运行时互操作）休眠、Phase A（静态清单与预检）可交付——见该文档开头的「阻断性发现」。该文档还记录了清单字段、pin 的 `rc` 版本、`lib/bridge.js` 的契约、adapter 的 staging 契约、明确不实现的协议，以及评审确认的已知行为。
 
 ## Development
+
+AI agents working in this checkout should read [AGENTS.md](AGENTS.md) first — it
+records the build/install loop as a rule rather than a suggestion.
 
 ```sh
 npm run check   # node --check over lib/, bin/
@@ -372,11 +375,17 @@ npm test        # standalone smoke tests (no dsh needed)
 npm pack                                        # -> dsh-oc-tui-<version>.tgz
 dsh plugin --profile tui remove -w dsh-oc-tui   # detach the old copy FIRST
 Remove-Item .\*.tgz                             # then drop the stale tarball
-npm pack
+npm pack                                        # repack the current tree
+Copy-Item .\dsh-oc-tui-<version>.tgz $env:USERPROFILE\.dsh\profiles\tui\
 dsh plugin --profile tui add -w .\dsh-oc-tui-<version>.tgz
+Remove-Item $env:USERPROFILE\.dsh\profiles\tui\dsh-oc-tui-<version>.tgz
 ```
 
-Detach before deleting: pnpm resolves the profile's existing `file:` dependency while adding, so a dependency pointing at a deleted tarball aborts the whole install with `ENOENT`.
+Three things that will bite you:
+
+- **Detach before deleting.** pnpm resolves the profile's existing `file:` dependency while adding, so a dependency pointing at a deleted tarball aborts the whole install with `ENOENT`.
+- **The tarball has to be reachable from the profile directory while you add it.** dsh hands package specs to pnpm with `cwd` pinned to the profile directory, and pnpm 9.15.9 then looks for the tarball *by name inside the profile* rather than at the absolute path it was given: the `add` fails with `ENOENT: no such file or directory, open '…\.dsh\profiles\tui\dsh-oc-tui-<version>.tgz'`. Copy it in first; dsh writes the absolute path into the profile manifest, so the copy comes straight back out afterwards.
+- **Remove before adding, even at the same version.** dsh appends a bundle to `dsh.profile.bundles` only for dependencies that were *not* already installed, so adding over an existing copy installs the files and silently skips the bundle row — the profile then boots dsh-base with no TUI.
 
 Verify the swap actually landed — the version string proves nothing:
 
@@ -388,6 +397,12 @@ foreach ($rel in @('lib\index.js','lib\ui.js','lib\util.js','lib\term.js','lib\m
   $b = (Get-FileHash "$env:USERPROFILE\.dsh\profiles\tui\node_modules\dsh-oc-tui\$rel").Hash
   if ($a -ne $b) { "DIFFERS: $rel" }
 }
+```
+
+The reverse failure is just as silent and worse: current files with no `dsh-oc-tui` row in `dsh.profile.bundles` means dsh-base boots with no TUI. Confirm the layer composes:
+
+```sh
+dsh --profile tui --dump-config | grep -A2 tui-app
 ```
 
 Then boot it for real. Reaching the title screen is not enough — the session-open path is where host API breaks surface, so send a message. Test `--resume` separately, because it is an apply-time path that can lose a startup race the post-boot paths win.
@@ -473,3 +488,5 @@ tests/smoke.test.mjs standalone smoke tests
 ## License
 
 [LGPL-3.0-or-later](LICENSE).
+
+**Third-party.** [`lovely-mermaid`](https://www.npmjs.com/package/lovely-mermaid) 0.3.3 (Apache-2.0, © Alexey Zaytsev / ccch1mneyyy) lays out mermaid diagrams as terminal text; its license ships in its package, and its source is at [github.com/ccch1mneyyy/lovely-mermaid](https://github.com/ccch1mneyyy/lovely-mermaid).
