@@ -222,9 +222,10 @@ for (const [COLS, ROWS] of [[40, 30], [80, 24], [100, 30], [140, 42]]) {
   ok("closing rewind overlay leaves no residue", gridDiff(emulatePaint(writes, COLS, ROWS), screen, COLS, ROWS).length === 0)
 }
 
-// The workspace row names the path a live session is rooted in. A long path must
-// be shortened without breaking the row's width budget or leaving residue, and a
-// wide-rune path must be clipped by cells rather than by code units.
+// The header's right end names the workspace a live session is rooted in, with
+// the git branch beside it. A long path must be shortened without breaking the
+// row's width budget or leaving residue, and a wide-rune path must be clipped
+// by cells rather than by code units.
 for (const [COLS, ROWS, cwd, branch] of [
   [140, 42, "D:\\Projects\\DeepSeekHarnessPlugins", "main"],
   [100, 30, "D:\\Projects\\DeepSeekHarnessPlugins\\deepseek-harness-tui", "feat/rewind"],
@@ -236,44 +237,46 @@ for (const [COLS, ROWS, cwd, branch] of [
 ]) {
   const { term, writes } = paintCapture(COLS, ROWS)
   const app = new App({ cols: COLS, rows: ROWS, on() {} })
-  app.setSession({ id: "s", title: "Workspace row" })
+  app.setSession({ id: "s", title: "Workspace row", model: "test-model-9" })
   app.setWorkspace({ workingDirectory: cwd, gitBranch: branch })
   const screen = app.render(); term.paint(screen)
   const diff = gridDiff(emulatePaint(writes, COLS, ROWS), screen, COLS, ROWS)
-  ok(`${COLS}x${ROWS} workspace row no residue`, diff.length === 0, JSON.stringify(diff.slice(0, 3)))
+  ok(`${COLS}x${ROWS} header no residue`, diff.length === 0, JSON.stringify(diff.slice(0, 3)))
   const wrong = rowWidths(writes).filter((r) => r.cols !== 0 && r.cols !== COLS)
-  ok(`${COLS}x${ROWS} workspace row keeps ${COLS} columns`, wrong.length === 0, JSON.stringify(wrong.slice(0, 3)))
-  const rows = screen.cells.map((row) => row.map((c) => c.ch).join(""))
-  const painted = rows.some((row) => row.includes(cwd))
-  if (ROWS >= 20) {
-    ok(`${COLS}x${ROWS} workspace row shows the path`, painted || rows.some((row) => row.includes("WORKSPACE")),
-      JSON.stringify(rows[1].slice(0, COLS)))
-    // The strip has a tone of its own: not the brand bar above, not the page below.
-    const barBg = screen.cells[1][2].style?.bg
-    ok(`${COLS}x${ROWS} workspace strip has its own background`,
-      barBg === THEME.workspaceBar && barBg !== THEME.backgroundPanel && barBg !== THEME.background,
-      String(barBg))
+  ok(`${COLS}x${ROWS} header keeps ${COLS} columns`, wrong.length === 0, JSON.stringify(wrong.slice(0, 3)))
+  const row0 = screen.cells[0].map((c) => c.ch).join("")
+  // The model lives on the status row / rail MODEL section, never in the header.
+  ok(`${COLS}x${ROWS} header carries no model`, !row0.includes("test-model-9"))
+  if (COLS >= 80) {
+    // Roomy rows: label, path (shortened from the head, so the project folder
+    // stays readable) and the branch when there is one — all on the brand row.
+    ok(`${COLS}x${ROWS} header names the workspace`, row0.includes("WORKSPACE"), JSON.stringify(row0))
+    ok(`${COLS}x${ROWS} header shows the project folder`, row0.includes("harness") || row0.includes(cwd))
+    if (branch) ok(`${COLS}x${ROWS} header names the branch`, row0.includes("git: " + branch), JSON.stringify(row0))
+  } else {
+    // Tight rows keep the session title instead; the workspace yields whole,
+    // and a clipped title is marked with an ellipsis, never a hard cut.
+    ok(`${COLS}x${ROWS} narrow header keeps the title`, row0.includes("Workspa"), JSON.stringify(row0))
+    ok(`${COLS}x${ROWS} narrow header marks the cut`, row0.includes("…"))
+    ok(`${COLS}x${ROWS} narrow header drops the workspace`, !row0.includes("WORKSPACE") && !row0.includes("git: "))
   }
 }
 
-// Nothing to name (title screen, or a path with no room) keeps the page tone, so
-// the strip never shows up as an unexplained empty band.
+// The title screen keeps the workspace out of the header (its centre block
+// owns it there), and the header is one row tall everywhere.
 {
   const app = new App({ cols: 80, rows: 24, on() {} })
   app.setWelcome({ workingDirectory: "D:\\Projects\\x", gitBranch: "main" })
-  ok("title screen keeps the page background on the workspace row",
-    app.render().cells[1][2].style?.bg === THEME.background)
-  const narrow = new App({ cols: 20, rows: 24, on() {} })
-  narrow.setSession({ id: "s", title: "narrow" })
-  narrow.setWorkspace({ workingDirectory: "D:\\Projects\\a-very-long-workspace-name", gitBranch: "" })
-  ok("a path with no room leaves the row untinted",
-    narrow.render().cells[1][2].style?.bg === THEME.background)
+  const rows = app.render().cells.map((r) => r.map((c) => c.ch).join(""))
+  ok("title screen header carries no workspace", !rows[0].includes("WORKSPACE"))
+  const layout = app._layout()
+  ok("header is one row", layout.headerH === 1 && layout.transcriptTop === 1)
 }
 
 // ---- session stats strip and window ----------------------------------------
 // The strip takes a transcript row and the window repaints over the frame; both
 // must leave the terminal exactly as the painter believes it is, at every width.
-for (const [COLS, ROWS] of [[130, 45], [100, 30], [80, 24], [60, 20], [46, 16]]) {
+for (const [COLS, ROWS] of [[150, 45], [100, 30], [80, 24], [60, 20], [46, 16]]) {
   const { term, writes } = paintCapture(COLS, ROWS)
   const app = new App({ cols: COLS, rows: ROWS, on() {} })
   app.setSession({ id: "s", title: "Stats", model: "m" })
@@ -291,18 +294,97 @@ for (const [COLS, ROWS] of [[130, 45], [100, 30], [80, 24], [60, 20], [46, 16]])
   let screen = app.render(); term.paint(screen)
   ok(`${COLS}x${ROWS} stats strip leaves no residue`, gridDiff(emulatePaint(writes, COLS, ROWS), screen, COLS, ROWS).length === 0)
   const stripRow = screen.cells.findIndex((row) => row.some((c) => c.ch === "▤"))
-  ok(`${COLS}x${ROWS} stats strip is one row above the composer`, stripRow > 0)
+  // Rail widths (>= 140) hand the strip's figures to the rail; narrower keep it.
+  if (COLS < 140) ok(`${COLS}x${ROWS} stats strip is one row above the composer`, stripRow > 0)
+  else ok(`${COLS}x${ROWS} rail width drops the strip for the rail`, stripRow === -1)
   app.statsOpen = true
   screen = app.render(); term.paint(screen)
   const diff = gridDiff(emulatePaint(writes, COLS, ROWS), screen, COLS, ROWS)
   ok(`${COLS}x${ROWS} stats window leaves no residue`, diff.length === 0, JSON.stringify(diff.slice(0, 3)))
   const rows = screen.cells.map((r) => r.map((c) => c.ch).join("")).join("\n")
+  // Every width gets the centered modal now: the maximized window used to
+  // swap it for a right-hand panel, and the two shapes read as different
+  // features.
   ok(`${COLS}x${ROWS} stats window keeps its box inside the screen`,
-    rows.includes("session stats") && screen.cells.length === ROWS)
+    rows.includes("session stats") && !rows.includes("SESSION STATS") && screen.cells.length === ROWS)
+  // Centered in the main area, not on the full terminal: at rail widths the app
+  // is only the columns left of the rail's border, and a full-width center
+  // pushes the box half a rail's width right of the frame it covers.
+  const layout = app._layout()
+  const cut = layout.railW > 0 ? layout.borderX : COLS
+  const modalRow = screen.cells.map((r) => r.slice(0, cut).map((c) => c.ch).join(""))
+    .find((text) => text.includes("session stats"))
+  const modalLeft = modalRow.indexOf("│")
+  const modalRight = modalRow.lastIndexOf("│")
+  ok(`${COLS}x${ROWS} stats window centers in the main area`,
+    Math.abs(modalLeft - (cut - 1 - modalRight)) <= 1 && (layout.railW === 0 || modalRight < layout.borderX),
+    JSON.stringify({ left: modalLeft, right: modalRight, cut, railW: layout.railW }))
   app.statsOpen = false
   screen = app.render(); term.paint(screen)
   ok(`${COLS}x${ROWS} closing the stats window leaves no residue`,
     gridDiff(emulatePaint(writes, COLS, ROWS), screen, COLS, ROWS).length === 0)
+}
+
+// Every modal centers in the main area, not on the full terminal. The rail
+// leaves the app only the columns left of its border, so centering on the full
+// width displaced each overlay half a rail's width to the right of the frame it
+// covers — the maximized window then read as misaligned against the composer
+// below it, while the narrow window (no rail) looked right.
+{
+  const overlays = [
+    ["stats", (app) => {
+      app.setStats({ stats: { turns: 2, steps: 5 }, pressure: {}, breakdown: {} })
+      app.statsOpen = true
+    }],
+    ["help", (app) => { app.overlay = "help" }],
+    ["settings", (app) => app.openSettings([
+      { kind: "header", label: "General" },
+      { id: "theme", label: "Theme", value: "blue" },
+    ])],
+    ["rewind", (app) => app.openRewind({
+      items: [{ n: 1, seq: 0, label: "1. first prompt" }],
+      restoreOptions: [{ id: "both", label: "Restore conversation and files" }],
+    })],
+    ["questions", (app) => {
+      app.pendingQuestions = {
+        questions: [{ question: "Pick one?", options: [{ label: "A" }, { label: "B" }] }],
+        index: 0,
+        drafts: [{ selected: [], custom: "" }],
+      }
+    }],
+    ["secret", (app) => {
+      app.pendingSecret = { label: "Provider API key", description: null, draft: "sk-123", cursor: 0, error: null, settle() {} }
+    }],
+  ]
+  // The first rounded box whose top edge sits above the composer's rows.
+  const modalBox = (screen, rows) => {
+    for (let y = 0; y < rows - 8; y++) {
+      const text = screen.cells[y].map((c) => c.ch).join("")
+      const l = text.indexOf("╭")
+      if (l < 0) continue
+      const r = text.indexOf("╮", l)
+      if (r >= 0) return [l, r]
+    }
+    return null
+  }
+  for (const [COLS, ROWS] of [[200, 50], [150, 45], [140, 42], [100, 30]]) {
+    for (const [name, open] of overlays) {
+      const app = new App({ cols: COLS, rows: ROWS, on() {} })
+      app.setSession({ id: "s", title: "Overlay", model: "m" })
+      app.setContextMeter({
+        pressure: { pressureTokens: 32_000, contextWindow: 128_000 },
+        breakdown: { systemTokens: 1_100, toolsTokens: 6_800, messageTokens: 24_100 },
+      })
+      open(app)
+      const layout = app._layout()
+      const region = layout.railW > 0 ? layout.borderX : COLS
+      const box = modalBox(app.render(), ROWS)
+      ok(`${COLS}x${ROWS} ${name} centers in the main area`,
+        box !== null && Math.abs(box[0] - (region - 1 - box[1])) <= 1
+          && (layout.railW === 0 || box[1] < layout.borderX),
+        JSON.stringify(box))
+    }
+  }
 }
 
 // The standalone secret prompt is a new painted overlay; like every other
@@ -434,4 +516,118 @@ console.log("all render tests passed")
   term.paint(screen)
   bad = gridDiff(emulatePaint(writes, COLS, ROWS), screen, COLS, ROWS)
   ok("scrolled image frame leaves no residue", bad.length === 0, JSON.stringify(bad.slice(0, 6)))
+}
+
+// ---- mermaid engine settle -------------------------------------------------
+// The first fence renders its placeholder while the lazy engine import is in
+// flight; when the engine settles, the per-block line cache (keyed rev+width)
+// must be invalidated or the repaint reuses the cached "rendering…" rows
+// forever — the stuck-loading symptom a window resize used to be the only
+// cure for (the resize changed the cache key).
+{
+  const COLS = 100, ROWS = 30
+  const app = new App({ cols: COLS, rows: ROWS, on() {} })
+  app.setSession({ id: "s", title: "T", model: "m" })
+  const block = app.ensureAssistantBlock(Date.now())
+  block.text = "```mermaid\ngraph TD\n A[Start] --> B[End]\n```"
+  block.streaming = false
+  app._mermaidEngine = undefined
+  app.render() // first frame: engine starts loading, placeholder is cached
+  ok("mermaid placeholder cached while the engine loads", app._blockLineCache.has(block))
+  const fakeEngine = {
+    render: (src) => ({ plain: ["A --> B"], styled: [[{ text: "A ── B", role: "edge" }]], width: 8, warnings: [] }),
+  }
+  app._mermaidEngineSettled(fakeEngine)
+  const screen = app.render()
+  const rows = screen.cells.map((r) => r.map((c) => c.ch).join("")).join("\n")
+  ok("engine settle invalidates the line cache: art shows at the same width", rows.includes("A ── B") && !rows.includes("rendering mermaid"))
+  // The settled engine must not re-trigger the lazy import on later fences.
+  ok("engine state is settled", app._mermaidEngine === fakeEngine)
+}
+
+// ---- tool activity rows ---------------------------------------------------
+// Collapsed, a tool row is one line: a status mark, the action in the tool's
+// accent, and the target it acts on. Expanded, the result hangs under a ⎿
+// gutter and the row offers the way back.
+{
+  const COLS = 110, ROWS = 30
+  const app = new App({ cols: COLS, rows: ROWS, on() {} })
+  app.setSession({ id: "s", title: "T", model: "m" })
+  app.startTool({ callId: "r1", name: "read", args: '{"file_path":"D:/x/README.md"}' })
+  app.updateTool("r1", { status: "ok", result: "line one\nline two\nline three" })
+  const readBlock = app.blocks.find((b) => b.kind === "tool")
+  app.startTool({ callId: "p1", name: "pwsh", args: '{"command":"git status --short"}' })
+  app.updateTool("p1", { status: "error", result: "fatal: not a git repository" })
+  const screen = app.render()
+  const rows = screen.cells.map((r) => r.map((c) => c.ch).join(""))
+  // The composer below the transcript keeps its own rounded frame, so "no
+  // frame" is about the transcript itself.
+  const { transcriptTop, transcriptH } = app._layout()
+  const transcript = rows.slice(transcriptTop, transcriptTop + transcriptH)
+  const rowText = (needle) => rows.find((r) => r.includes(needle)) ?? ""
+  const readRow = rowText("D:/x/README.md")
+  ok("tool row shows the action and its target", readRow.includes("read") && readRow.includes("D:/x/README.md"))
+  ok("tool row hides the result while collapsed", !rows.join("\n").includes("line three"))
+  ok("tool row shows the expand hint", readRow.includes("click to expand"))
+  ok("tool row keeps the error mark", rowText("git status --short").includes("✗"))
+  ok("tool row marks success", readRow.includes("✓"))
+  ok("tool row carries no frame", !transcript.join("\n").includes("╭") && !transcript.join("\n").includes("│"))
+  // A flat row is clickable across the whole transcript width.
+  ok("tool row hit spans the row", (() => {
+    const hit = app.hitRegions.find((r) => r.kind === "tool")
+    return hit && hit.width === COLS && hit.x === 0
+  })())
+  app.toggleTool(readBlock)
+  const open = app.render().cells.map((r) => r.map((c) => c.ch).join(""))
+  ok("tool row expanded shows the full result", open.join("\n").includes("line three"))
+  ok("tool row expanded uses the ⎿ gutter", open.some((r) => r.includes("⎿")))
+  ok("tool row expanded shows the collapse hint", open.find((r) => r.includes("D:/x/README.md")).includes("click to collapse"))
+  app.toggleTool(readBlock)
+  ok("tool row toggles back", !app.render().cells.map((r) => r.map((c) => c.ch).join("")).join("\n").includes("line three"))
+  // Accents: read -> info, pwsh/run -> warning, edit -> secondary.
+  const t = THEME
+  ok("tool accents differ per tool", (() => {
+    const app2 = new App({ cols: COLS, rows: ROWS, on() {} })
+    app2.setSession({ id: "s", title: "T", model: "m" })
+    app2.startTool({ callId: "a", name: "read", args: "{}" })
+    app2.updateTool("a", { status: "ok", result: "x" })
+    app2.startTool({ callId: "b", name: "pwsh", args: "{}" })
+    app2.updateTool("b", { status: "ok", result: "y" })
+    app2.startTool({ callId: "c", name: "edit", args: "{}" })
+    app2.updateTool("c", { status: "ok", result: "z" })
+    const screen = app2.render()
+    const colorAt = (needle) => {
+      for (let y = 0; y < screen.rows; y++) {
+        const text = screen.cells[y].map((c) => c.ch).join("")
+        const x = text.indexOf(needle)
+        if (x >= 0) return screen.cells[y][x].style?.fg
+      }
+      return null
+    }
+    return colorAt("read") === t.info && colorAt("run") === t.warning && colorAt("edit") === t.secondary
+  })())
+}
+
+// ---- assistant output is flat, not boxed ------------------------------------
+// The answer is a plain column of text under its `dsh · time` label: no bubble
+// frame anywhere in the transcript, and a message that only issued tool calls
+// renders nothing at all while its label moves to the answer that follows.
+{
+  const app = new App({ cols: 110, rows: 30, on() {} })
+  app.setSession({ id: "s", title: "T", model: "m", provider: "p" })
+  app.addUser("check")
+  const empty = app.ensureAssistantBlock(Date.now())
+  empty.streaming = false
+  app.startTool({ callId: "r", name: "read", args: '{"file_path":"D:/x/README.md"}' })
+  app.updateTool("r", { status: "ok", result: "ok" })
+  const withText = app.ensureAssistantBlock(Date.now())
+  withText.text = "读取完成。"
+  withText.streaming = false
+  const rows = app.render().cells.map((r) => r.map((c) => c.ch).join(""))
+  const { transcriptTop, transcriptH } = app._layout()
+  const transcript = rows.slice(transcriptTop, transcriptTop + transcriptH)
+  ok("tool-only assistant message renders nothing", !transcript.join("\n").includes("╭"))
+  ok("dsh label transfers to the text answer", rows.some((r) => r.trimStart().startsWith("dsh · ")))
+  ok("assistant answer is flush text", rows.some((r) => r.startsWith("  读取完成。")))
+  ok("user turn opens with the pointer", rows.some((r) => r.startsWith("  ❯ ")))
 }

@@ -628,25 +628,28 @@ console.log('')
 if (failed > 0) { console.log(failed + ' test(s) failed'); process.exit(1) }
 console.log('all graphics tests passed')
 
-// ---- bubble layout + mermaid consumption (ui.js) ----
+// ---- flat transcript layout + mermaid consumption (ui.js) ----
 
 test_bubbles: {
   const app = new App({ cols: 60, rows: 24, on() {} })
   app.setSession({ id: 's', title: 'Bubbles' })
-  app.addUser('中文消息：这条消息里有宽字符，用来验证气泡内换行与边框列宽。')
+  app.addUser('中文消息：这条消息里有宽字符，用来验证平铺行的换行与列宽，所以它必须长到至少折成两行。')
   app.startAssistant()
   app.streamChunk({ type: 'text-delta', text: '回答包含 ```js 代码块与 **加粗**。' })
   const block = app.blocks[1]
   block.streaming = false
   block.rev++
-  const COLS = 60, ROWS = 24
   const screen = app.render()
-  ok('bubble rows stay within the frame', screen.cells.every((row) => row.length === COLS))
+  ok('flat rows stay within the frame', screen.cells.every((row) => row.length === 60))
   const rows = screen.cells.map((r) => r.map((c) => c.ch).join(''))
-  ok('user bubble top border', rows.some((r) => r.includes('╭─ you ·')))
-  ok('assistant bubble top border', rows.some((r) => r.includes('╭─ dsh ·')))
-  ok('bubble bottom border', rows.some((r) => r.trimEnd().endsWith('╯')))
-  ok('bubble body carries the left border', rows.some((r) => r.includes('│ ' + '中文消息')))
+  const userRow = rows.find((r) => r.includes('中文消息'))
+  ok('user turn opens with the pointer', userRow !== undefined && userRow.startsWith('  ❯ '))
+  ok('wrapped user text hangs under the pointer', rows.slice(0, 20).some((r) => /^ {4}\S/.test(r)))
+  ok('user turn trails its timestamp', rows.slice(0, 20).some((r) => / · \d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\s*$/.test(r)))
+  ok('assistant labels the turn with dsh', rows.some((r) => r.trimStart().startsWith('dsh · ')))
+  ok('assistant answer indents under the label', rows.some((r) => r.startsWith('  回答包含')))
+  ok('the transcript draws no box frame',
+    !rows.slice(0, 20).join('\n').includes('╭') && !rows.slice(0, 20).join('\n').includes('│'))
 }
 test_mermaid: {
   const app = new App({ cols: 80, rows: 24, on() {} })

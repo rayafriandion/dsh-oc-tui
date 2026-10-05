@@ -23,7 +23,7 @@ const ok = (name, cond) => cond ? console.log("ok   " + name) : (console.log("FA
 // ---- util ----
 eq("displayWidth CJK", displayWidth("中文a"), 5)
 eq("roughTokens", roughTokens("你好world"), 3)
-eq("truncateWidth", truncateWidth("hello world", 5), "hello")
+eq("truncateWidth marks the cut", truncateWidth("hello world", 5), "hell…")
 eq("shortenPath keeps a short path", shortenPath("D:\\a\\b", 20), "D:\\a\\b")
 eq("shortenPath elides whole head segments", shortenPath("D:\\Projects\\dsh-oc-tui", 12), "…\\dsh-oc-tui")
 eq("shortenPath keeps the deepest segments that fit", shortenPath("D:\\Projects\\DeepSeekHarnessPlugins", 30), "…\\DeepSeekHarnessPlugins")
@@ -45,13 +45,13 @@ eq("displayWidth of a variation-selected check", displayWidth("✔️ ok"), 5)
 const wrapped = wrapText("☀️ fine", 4)
 eq("wrapText never cuts an emoji presentation in half",
   wrapped.every((l) => displayWidth(l) <= 4) && wrapped.join("").replace(/ /g, "") === "☀️fine", true, wrapped)
-eq("truncateWidth keeps an emoji presentation whole", truncateWidth("✔️ ok", 3), "✔️ ")
+eq("truncateWidth keeps an emoji presentation whole", truncateWidth("✔️ ok", 3), "✔️…")
 eq("displayWidth of a flag", displayWidth("🇺🇸"), 2)
 eq("displayWidth of a lone modifier", displayWidth("\u{1F3FB}"), 0)
 eq("displayWidth of a combining accent", displayWidth("e\u0301"), 1)
 eq("displayWidth of a plain text emoji", displayWidth("🌡 sensor"), 9)
 eq("wrapText reads a joined emoji as one cell", wrapText("👨‍👩‍👧 hello", 8), ["👨‍👩‍👧 hello"])
-eq("truncateWidth keeps a joined emoji whole", truncateWidth("👨‍👩‍👧 x", 3), "👨‍👩‍👧 ")
+eq("truncateWidth keeps a joined emoji whole", truncateWidth("👨‍👩‍👧 x", 3), "👨‍👩‍👧…")
 eq("contentText includes reasoning", contentText([{ type: "reasoning", text: "hidden" }, { type: "text", text: "visible" }]), "hiddenvisible")
 eq("contentText skips reasoning", contentText([{ type: "reasoning", text: "hidden" }, { type: "text", text: "visible" }], { skipReasoning: true }), "visible")
 eq("timeString carries full date", /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(timeString(0)), true)
@@ -109,7 +109,9 @@ eq("toolSummary no args", toolSummary("read"), "read")
 // ---- decodeKey ----
 eq("Enter", decodeKey(Buffer.from([0x0d])), { key: { name: "return" }, consumed: 1 })
 eq("Ctrl+D", decodeKey(Buffer.from([0x04])), { key: { name: "d", ctrl: true }, consumed: 1 })
-eq("Up", decodeKey(Buffer.from([0x1b, 0x5b, 0x41])), { key: { name: "up" }, consumed: 3 })
+eq("Up", decodeKey(Buffer.from([0x1b, 0x5b, 0x41])), { key: { name: "up", shift: false, alt: false, ctrl: false }, consumed: 3 })
+eq("Shift+Up", decodeKey(Buffer.from("\x1b[1;2A")), { key: { name: "up", shift: true, alt: false, ctrl: false }, consumed: 6 })
+eq("Ctrl+Down", decodeKey(Buffer.from("\x1b[1;5B")), { key: { name: "down", shift: false, alt: false, ctrl: true }, consumed: 6 })
 eq("PgUp", decodeKey(Buffer.from([0x1b, 0x5b, 0x35, 0x7e])), { key: { name: "pageup" }, consumed: 4 })
 eq("ESC alone", decodeKey(Buffer.from([0x1b])), { key: { name: "escape" }, consumed: 1 })
 eq("printable", decodeKey(Buffer.from("a")), { key: { name: "a", text: "a" }, consumed: 1 })
@@ -714,7 +716,7 @@ eq("single session title in header", (headerRows.match(/Test/g) ?? []).length, 1
 ok("session id hidden from header", !headerRows.includes("t1"))
 // user block
 const rendered = screen.cells.map((r) => r.map((c) => c.ch).join("")).join(NL2)
-ok("user label", rendered.includes("you ·"))
+ok("user pointer marks the turn", rendered.includes("❯ ") && !rendered.includes("you ·"))
 eq("single assistant header per request", (rendered.match(/dsh\s+·/g) ?? []).length, 1)
 ok("no left session rail", !rendered.includes("Test session"))
 ok("multiline composer", rendered.includes("first line") && rendered.includes("second line"))
@@ -831,7 +833,9 @@ const helloX = selRows[userY].indexOf("hello")
 selApp.startTextSelection(helloX, userY)
 selApp.updateTextSelection(wordX + "selectable".length - 1, answerY)
 const multiSel = selApp.selectionText().split(NL2)
-eq("multi-row selection first line", multiSel[0], "hello world")
+// The pointer row carries a trailing timestamp, so a drag that reaches the end
+// of the line takes it along — the text itself still starts the selection.
+ok("multi-row selection first line starts at the user text", multiSel[0].startsWith("hello world"))
 eq("multi-row selection last line", multiSel.at(-1), "  selectable")
 // Wide runes: continuation cells are skipped, CJK survives the copy intact.
 const cjkApp = new App(fakeTerm)
@@ -946,7 +950,7 @@ streamThink.toggleThinking(streamBlock)
 const expandedAfterStream = streamThink.render().cells.map((r) => r.map((c) => c.ch).join("")).join(NL2)
 ok("thinking expandable after streaming", expandedAfterStream.includes("live streaming reasoning"))
 
-// Context notes render as thinking-style collapsible boxes with their own palettes.
+// Context notes render as thinking-style collapsible rows with their own palettes.
 const noteApp = new App(fakeTerm)
 noteApp.setSession({ id: "t1", title: "Test" })
 noteApp.addNote("Additional instructions from: AGENTS.md", "system-reminder")
@@ -964,8 +968,10 @@ const noteRecollapsed = noteApp.render().cells.map((r) => r.map((c) => c.ch).joi
 ok("note collapses again on click", !noteRecollapsed.includes("Additional instructions"))
 const hexRgb = (hex) => [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16))
 const rgbDist = (a, b) => Math.hypot(...hexRgb(a).map((v, i) => v - hexRgb(b)[i]))
-ok("note palettes differ from thinking background", THEME.reminderBg !== THEME.compactionBg && THEME.reminderBg !== THEME.backgroundElement && THEME.compactionBg !== THEME.backgroundElement)
-ok("note backgrounds are visually distinct", rgbDist(THEME.reminderBg, THEME.backgroundElement) > 40 && rgbDist(THEME.compactionBg, THEME.backgroundElement) > 40 && rgbDist(THEME.reminderBg, THEME.compactionBg) > 40)
+// The rows are flat now, so a note is told apart by its text color alone: each
+// label keeps its own hue, and none of them borrows the thinking row's.
+ok("note palettes differ from thinking", THEME.reminder !== THEME.compaction && THEME.reminder !== THEME.thinking && THEME.compaction !== THEME.thinking)
+ok("note colors are visually distinct", rgbDist(THEME.reminder, THEME.compaction) > 40 && rgbDist(THEME.reminder, THEME.thinking) > 40 && rgbDist(THEME.compaction, THEME.thinking) > 40)
 
 // ---- context meter (web ContextMeter port) ----
 const meterApp = new App(fakeTerm)
@@ -1049,11 +1055,17 @@ narrowStripApp.setMetrics(metricsSnapshot)
 const narrowStripRow = narrowStripApp.render().cells.map((r) => r.map((c) => c.ch).join("")).find((line) => line.includes("▤"))
 ok("narrow strip keeps whole groups and elides", narrowStripRow.includes("1 turn · 2 steps") && narrowStripRow.includes("│…") && !narrowStripRow.includes("cache"))
 ok("narrow strip never cuts a figure in half", !narrowStripRow.includes("cach"))
-const wideStripApp = new App({ cols: 140, rows: 30, started: true })
+// "Wide" for the strip means just under the status-rail threshold: at rail
+// widths the rail carries the figures expanded and the strip drops out whole.
+const wideStripApp = new App({ cols: 119, rows: 30, started: true })
 wideStripApp.setSession({ id: "t1", title: "Test" })
 wideStripApp.setMetrics(metricsSnapshot)
 const wideStripRow = wideStripApp.render().cells.map((r) => r.map((c) => c.ch).join("")).find((line) => line.includes("▤"))
 ok("wide strip advertises the command", wideStripRow.includes("/stats") && !wideStripRow.includes("│…"))
+const railWidthApp = new App({ cols: 140, rows: 30, started: true })
+railWidthApp.setSession({ id: "t1", title: "Test" })
+railWidthApp.setMetrics(metricsSnapshot)
+ok("status rail replaces the strip on wide windows", !railWidthApp.render().cells.some((r) => r.map((c) => c.ch).join("").includes("▤")))
 // A session with nothing to report keeps the row for the transcript.
 const emptyStatsApp = new App(fakeTerm)
 emptyStatsApp.setSession({ id: "t1", title: "Test" })
@@ -1108,7 +1120,10 @@ gapAssistant.streaming = false
 const gapRows = gapApp.render().cells.map((r) => r.map((c) => c.ch).join(""))
 const thinkIdx = gapRows.findIndex((r) => r.includes("thinking"))
 const answerIdx = gapRows.findIndex((r) => r.includes("answer"))
-ok("thinking box sits right above the answer bubble", thinkIdx >= 0 && answerIdx === thinkIdx + 2 && gapRows[thinkIdx + 1].includes("╭"))
+// A blank line separates a collapsed thinking row from the visible answer, and
+// the answer's own `dsh · time` label sits between them.
+ok("thinking row sits right above the answer label", thinkIdx >= 0 && answerIdx === thinkIdx + 3
+  && gapRows[thinkIdx + 1].trim() === "" && gapRows[thinkIdx + 2].includes("dsh"))
 
 // ---- theme / activity animation ----
 const SPINNER = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
@@ -1192,7 +1207,8 @@ ok("title blue-white gradient", gradRow >= 0 && gradColors.size >= 2)
 ok("theme is DeepSeek blue-white, no orange", THEME.primary === "4d6bfe" && !Object.values(THEME).some((c) => String(c).toLowerCase() === "fab283"))
 
 // assistant/message semantics: the visible text excludes reasoning, which
-// stays in its own box (so the box does not "disappear" into plain output).
+// stays in its own collapsible row (so it does not "disappear" into plain
+// output).
 const msgApp = new App(fakeTerm)
 msgApp.setSession({ id: "t1", title: "Test" })
 msgApp.addUser("hi")

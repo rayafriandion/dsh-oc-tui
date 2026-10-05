@@ -13,7 +13,7 @@
 [![License: LGPL-3.0-or-later](https://img.shields.io/badge/license-LGPL--3.0--or--later-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%3E%3D22-339933.svg)](https://nodejs.org)
 
-`dsh-oc-tui` renders the harness's durable event stream in your terminal — streaming replies, tool cards, todo lists, thinking blocks — and routes what you type back into the agent. Model routing, tool execution, approvals, commands, durable sessions, and credentials stay owned by DSH; this package owns terminal input and presentation.
+`dsh-oc-tui` renders the harness's durable event stream in your terminal — streaming replies, tool activity, todo lists, thinking blocks — and routes what you type back into the agent. Model routing, tool execution, approvals, commands, durable sessions, and credentials stay owned by DSH; this package owns terminal input and presentation.
 
 Published on **npm** as [`dsh-oc-tui`](https://www.npmjs.com/package/dsh-oc-tui) and listed in the [**awesome-dsh-plugin**](https://awesome-dsh-plugin.com/zh/p/rayafriandion/dsh-oc-tui/) marketplace.
 
@@ -31,6 +31,7 @@ Published on **npm** as [`dsh-oc-tui`](https://www.npmjs.com/package/dsh-oc-tui)
   - [Interactive prompts](#interactive-prompts)
   - [Thinking intensity](#thinking-intensity)
   - [Session stats and the context meter](#session-stats-and-the-context-meter)
+  - [The status rail](#the-status-rail)
   - [Settings](#settings)
   - [In-app updates](#in-app-updates)
 - [How it works](#how-it-works)
@@ -50,13 +51,14 @@ Published on **npm** as [`dsh-oc-tui`](https://www.npmjs.com/package/dsh-oc-tui)
 | **Real image rendering** | Images in the transcript render as real pixels — kitty graphics, iTerm2 inline images, or sixel, probed from the terminal itself (works over SSH), with a truecolor half-block preview on terminals that support no protocol. Pasted images, stored attachments, and markdown images all flow through one pipeline. See [Graphics rendering](#graphics-rendering). |
 | **Mermaid diagrams** | A ` ```mermaid ` fence renders as a real diagram through a provider chain — local `mmdc` if installed, otherwise mermaid.ink (gated by a setting) — into the same image pipeline; offline it degrades to highlighted source. |
 | **Full markdown** | Tables in rounded boxes, nested and task lists, syntax-highlighted code (190+ languages), and clickable OSC 8 hyperlinks, rendered from markdown-it's CommonMark + GFM token stream. |
-| **Modern chat layout** | Rounded-corner chat bubbles for user and assistant turns (brand blue vs quiet), unified spacing, and a refined DeepSeek-blue theme. |
-| **Tool activity** | Tool cards with a one-line summary (`read src/app.ts`, `run npm test`), flowing spinners while running, and markdown-rendered results. |
+| **Flat transcript** | No frames around the conversation: your turns open with a brand-blue `❯` pointer and hang under it, the assistant answers as a full-width column of text under its `dsh · time` label, and every block measures itself in text — so wide runes never push a border out of alignment. The header is one row: brand and session title on the left, the workspace path with its git branch on the right; the model is not repeated there (the status row / rail names it). |
+| **Tool activity** | One row per tool: a status mark, the action in the tool's own accent (`read` cyan, `run` gold, `edit` light blue, `todo` mint), and its target. Click the row to expand the full result under a `⎿` gutter. |
 | **Interactive questions** | The model can pause and ask you — option lists, multi-select, free text, and a scrollable plan review — all inline in the terminal. See [Interactive prompts](#interactive-prompts). |
 | **Inline approvals** | `approval/request` prompts are answered with `y` / `n` without leaving the UI; the box shows the action and the reason, with room for origin, risk and details when a `@dsh-std` request carries them. |
 | **Session stats** | One stats strip above the composer — turns/steps, LLM and tool wall time, average TTFT, decode throughput, cache-hit rate, and billed input/output tokens — folded from durable events. See [Session stats and the context meter](#session-stats-and-the-context-meter). |
 | **Stats window** | Click the strip or the context meter, or type `/stats`, for the full session-statistics and token-usage breakdown. |
 | **Context meter** | Live context occupancy (`ctx ▓▓░░ 32K/128K 25%`), with the system/tools/messages composition in the same window. |
+| **Status rail (wide windows)** | From 140 columns a right-hand rail carries the expanded status — model, thinking intensity, context, session figures — plus the session's current goal (`/goal`) and its subagent activity, scrollable with `Shift+↑/↓` or the wheel. Narrow windows keep the bottom status row. See [The status rail](#the-status-rail). |
 | **Thinking intensity** | `Tab` cycles the current model's real reasoning levels; `Ctrl+E` opens a slider. The level is applied per request and persisted. |
 | **Shared settings** | The same host settings namespaces the Web UI uses — general, sessions, per-provider model configuration, credentials — persisted to `$DSH_HOME/settings.yaml`. |
 | **In-app updates** | Detect and switch versions of `@deepseek-ai/dsh` and `dsh-oc-tui` from inside the TUI, with Windows-safe deferred installs. |
@@ -216,13 +218,14 @@ It prefers the `dsh` on `PATH` and falls back to `npx --yes @deepseek-ai/dsh`. I
 | `Ctrl+D` | In Settings → Manage sessions: delete the focused session (press twice to confirm). |
 | `Ctrl+L` | Clear the transcript view. |
 | `Up` / `Down` | Move the caret across a multi-line prompt; on the first/last row, step through input history. |
+| `Shift+Up` / `Shift+Down` | Scroll the status rail (wide windows); without the rail they act as `Up` / `Down`. |
 | `Left` / `Right` | Move the caret within the input box. |
 | `PgUp` / `PgDn` | Scroll the transcript. |
 | `Esc` | Close the session stats window, the thinking slider, or help; cancel an approval; cancel a running turn; clear the prompt you are typing. |
 | `Esc Esc` | Idle with an empty prompt: open the rewind picker. |
 | `y` / `n` | Answer an inline approval prompt. |
 
-**Mouse.** The wheel scrolls the transcript (or the Settings window while it is open). Hold the left button and drag across the transcript to select text, then press the right button to copy the selection.
+**Mouse.** The wheel scrolls the transcript — or the status rail when the pointer rests over it, or the Settings window while it is open. Hold the left button and drag across the transcript to select text, then press the right button to copy the selection.
 
 ### Slash commands
 
@@ -285,6 +288,14 @@ The row above the composer is the **session stats strip**, the TUI's counterpart
 The whole strip is a click target. Clicking it — or the context meter at the right end of the status row (`ctx ▓▓░░ 32K/128K 25%`), or typing `/stats` — opens the **session stats window**; click again, click elsewhere, or press `Esc` to close. The window breaks the same line into labelled rows (`usage` / `duration` / `speed` / `tokens` / `cache`) and adds the context-occupancy reading with its heuristic composition — system prompt, tools, and messages — matching the Web UI's ContextMeter dialog.
 
 Figures come from the same sources as the Web UI, projection-first with the plugin's own fold as the fallback: `tokenUsage`, `contextPressure`, and `contextBreakdown` are mounted by `dsh-base`'s token-meter row, while `sessionStats` is mounted only by the web app bundle — so the TUI folds the durable `step` / `chunk` / `message` / `tool` events by the same rules. A missing projection falls back for that figure alone, and a figure nobody can supply stays hidden instead of printing a zero.
+
+### The status rail
+
+From **140 columns** a right-hand rail takes over the status figures, OpenCode-style: the session title pins to the top, scrollable sections fill the middle — `MODEL` (model, provider), `THINKING` (current level and its real range), `CONTEXT` (occupancy bar, tokens, billing, composition), `SESSION` (the stats strip's figures, expanded), `GOAL`, `SUBAGENTS` — and the running builds (`dsh x.y.z · tui a.b.c`) pin to the bottom. Sections with no data drop out whole.
+
+`GOAL` and `SUBAGENTS` read the harness's native surfaces: the `goal` projection registered by `dsh-goal` (objective, phase, rounds, blocker reason), and `ctx.subagents.listDescendants()` for the delegation tree rooted at the open session, refreshed on the scoped `subagent/start` / `subagent/end` edges. Both services are optional — a composition without them leaves those sections empty.
+
+When the sections outgrow the window a scrollbar appears in the rail's right edge; `Shift+↑` / `Shift+↓` or the wheel over the rail scrolls it. Clicking the `CONTEXT` section opens the session stats window (the seat the bottom-row meter vacates). Below 140 columns the rail disappears and the pre-rail layout — model on the status row, the stats strip above the composer — returns unchanged.
 
 ### Settings
 
@@ -464,7 +475,7 @@ lib/term.js          terminal engine (raw mode, screen, key decoding, image slab
 lib/caps.js          terminal capability probing (DA1, XTVERSION, kitty graphics, cell size)
 lib/image.js         image pipeline (decode/scale + halfblock, sixel, kitty, iTerm2 encoders)
 lib/mermaid.js       mermaid provider chain (mmdc → mermaid.ink → highlighted fallback)
-lib/ui.js            responsive view model + renderer (chat bubbles, question modal)
+lib/ui.js            responsive view model + renderer (flat transcript, tool rows, question modal)
 lib/metrics.js       whole-session stats + token usage fold (web stats strip / tokenUsage port)
 lib/interrupt.js     Ctrl+C lifecycle state
 lib/web-settings.js  shared WebUI settings projection (incl. the tui-graphics namespace)
