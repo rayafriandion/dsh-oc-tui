@@ -1,6 +1,6 @@
 # dsh-oc-tui
 
-**As the custom TUI engine cannot support advanced visual effects or full Markdown and Mermaid integration**, future versions will incorporate dependencies such as `chafa`, `mmdc`, and `mdcat` to enhance the visual experience. This update is tentatively scheduled for version `0.2.0` ; please note that this may result in incompatibility between the `0.1.x` and `0.2.x` series. We plan to release pre-release versions first to gather feedback. If you have suggestions for specific visual features, please share them in this issue thread or open a new issue with a title containing `Visual Experience Suggestion`
+**The `0.2.0` line is the visual-experience update, and it is out as a pre-release now** (`0.2.0-pre.9`, on npm's `next` channel): real image rendering, native Mermaid art, and full Markdown run through this plugin's own terminal engine. It needed no `chafa`, `mmdc` or `mdcat` wrapper — the rendering stack is pure npm (`sharp` decodes and scales, `lovely-mermaid` lays out Mermaid) — and which dsh (the harness) builds it serves is spelled out in the compatibility note below. If you have suggestions for specific visual features, please share them in the original issue thread or open a new issue with a title containing `Visual Experience Suggestion`
 
 **_Thank you for your support of the `dsh-oc-tui` plugin!_**
 
@@ -108,16 +108,23 @@ npm install -g dsh-oc-tui
 
 ### Version channels
 
-The **npm package** and the **[awesome-dsh-plugin](https://awesome-dsh-plugin.com/zh/p/rayafriandion/dsh-oc-tui/) marketplace entry** both ship **stable releases only** — pre-releases are never published to either. `npm install` therefore gives you the latest stable version, not a release candidate.
+npm carries two channels for this package: **`latest`** holds the stable releases, **`next`** the pre-releases (`0.2.0-pre.x`, `-rc`, `-alpha`, `-beta`). Untagged installs — `dsh plugin … add -w dsh-oc-tui` and `npm install -g dsh-oc-tui` above — therefore still give you the newest stable version, never a release candidate. The [awesome-dsh-plugin](https://awesome-dsh-plugin.com/zh/p/rayafriandion/dsh-oc-tui/) marketplace entry links to the same package, so an install started from it lands on the stable channel too.
 
-This README describes the current source tree, which can be ahead of the published release — a feature documented here is only guaranteed to exist in a stable build once that version is on npm.
+To run a pre-release, name the tag: `dsh plugin` forwards the spec to pnpm untouched, and pnpm resolves dist-tags.
 
-To run a pre-release, or unreleased work from this repository, install it explicitly from source:
+```sh
+dsh plugin --profile tui add -w dsh-oc-tui@next   # newest pre-release
+npm install -g dsh-oc-tui@next
+```
+
+Unreleased work in this repository carries no dist-tag at all, so install it from a packed tarball or a checkout (see [From a checkout or tarball](#from-a-checkout-or-tarball)):
 
 ```sh
 npm pack                                   # -> dsh-oc-tui-<version>.tgz
 dsh plugin --profile tui add -w ./dsh-oc-tui-<version>.tgz
 ```
+
+This README describes the current source tree, which can be ahead of the published release — a feature documented here is only guaranteed to exist in a stable build once that version is on npm.
 
 ### One-command installers
 
@@ -474,9 +481,12 @@ lib/startup.js       command-line provider (tuiStartup service)
 lib/term.js          terminal engine (raw mode, screen, key decoding, image slab emission)
 lib/caps.js          terminal capability probing (DA1, XTVERSION, kitty graphics, cell size)
 lib/image.js         image pipeline (decode/scale + halfblock, sixel, kitty, iTerm2 encoders)
-lib/mermaid.js       mermaid provider chain (mmdc → mermaid.ink → highlighted fallback)
+lib/mermaid.js       mermaid provider chain (mmdc → mermaid.ink → highlighted fallback), tried only for grammars the built-in engine cannot draw
+lib/mermaid-ascii.js native terminal art for mermaid fences (box-drawing layout, tried before the image path)
 lib/ui.js            responsive view model + renderer (flat transcript, tool rows, question modal)
+lib/splash-opencode.js title-screen art (OpenCode-style layout, DeepSeek gradient mark)
 lib/metrics.js       whole-session stats + token usage fold (web stats strip / tokenUsage port)
+lib/rewind.js        rewind picker: conversation fork from the event log plus fenced file restore
 lib/interrupt.js     Ctrl+C lifecycle state
 lib/web-settings.js  shared WebUI settings projection (incl. the tui-graphics namespace)
 lib/updates.js       in-app update manager (npm registry, download + staging, install verification)
