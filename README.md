@@ -102,16 +102,23 @@ npm install -g dsh-oc-tui
 
 ### Version channels
 
-The **npm package** and the **[awesome-dsh-plugin](https://awesome-dsh-plugin.com/zh/p/rayafriandion/dsh-oc-tui/) marketplace entry** both ship **stable releases only** — pre-releases are never published to either. `npm install` therefore gives you the latest stable version, not a release candidate.
+npm carries two channels for this package: **`latest`** holds the stable releases, **`next`** the pre-releases (`0.2.0-pre.x`, `-rc`, `-alpha`, `-beta`). Untagged installs — `dsh plugin … add -w dsh-oc-tui` and `npm install -g dsh-oc-tui` above — therefore still give you the newest stable version, never a release candidate. The [awesome-dsh-plugin](https://awesome-dsh-plugin.com/zh/p/rayafriandion/dsh-oc-tui/) marketplace entry links to the same package, so an install started from it lands on the stable channel too.
 
-This README describes the current source tree, which can be ahead of the published release — a feature documented here is only guaranteed to exist in a stable build once that version is on npm.
+To run a pre-release, name the tag: `dsh plugin` forwards the spec to pnpm untouched, and pnpm resolves dist-tags.
 
-To run a pre-release, or unreleased work from this repository, install it explicitly from source:
+```sh
+dsh plugin --profile tui add -w dsh-oc-tui@next   # newest pre-release
+npm install -g dsh-oc-tui@next
+```
+
+Unreleased work in this repository carries no dist-tag at all, so install it from a packed tarball or a checkout (see [From a checkout or tarball](#from-a-checkout-or-tarball)):
 
 ```sh
 npm pack                                   # -> dsh-oc-tui-<version>.tgz
 dsh plugin --profile tui add -w ./dsh-oc-tui-<version>.tgz
 ```
+
+This README describes the current source tree, which can be ahead of the published release — a feature documented here is only guaranteed to exist in a stable build once that version is on npm.
 
 ### One-command installers
 
@@ -425,6 +432,7 @@ lib/startup.js       command-line provider (tuiStartup service)
 lib/term.js          terminal engine (raw mode, screen, key decoding)
 lib/ui.js            responsive view model + renderer (includes the question modal)
 lib/metrics.js       whole-session stats + token usage fold (web stats strip / tokenUsage port)
+lib/rewind.js        rewind picker: conversation fork from the event log plus fenced file restore
 lib/interrupt.js     Ctrl+C lifecycle state
 lib/web-settings.js  shared WebUI settings projection
 lib/updates.js       in-app update manager (npm registry, download + staging, install verification)
