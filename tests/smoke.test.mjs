@@ -254,6 +254,8 @@ const fakeSettings = {
     if (ns === "locale") sections.set(ns, {})
     if (ns === "ui-conversation") sections.set(ns, { busyEnter: "queue" })
     if (ns === "tui-updates") sections.set(ns, { startupCheck: "on" })
+    if (ns === "tui-locale") sections.set(ns, { preference: "system" })
+    if (ns === "tui-graphics") sections.set(ns, { graphics: "auto", imageFallback: "halfblock", imageMaxRows: "20", mermaid: "auto" })
     userSections.set(ns, structuredClone(sections.get(ns)))
     revisions.set(ns, 0)
   },
@@ -317,19 +319,26 @@ ok("model items moved to the Model tab", !shared.items.some((item) => item.label
 ok("manage sessions setting", shared.items.some((item) => item.kind === "manage-sessions" && item.label === "Manage sessions"))
 ok("new session setting", shared.items.some((item) => item.kind === "new-session" && item.label === "New session"))
 eq("main tab headers", shared.items.filter((item) => item.kind === "header").map((item) => item.label).join(","), "General,Graphics,Sessions,System")
-eq("settings menu is Main, Model, Update", SETTINGS_MENU.map((entry) => entry.id).join(","), "main,model,update")
-ok("main tab carries the left menu", Array.isArray(shared.menu) && shared.menu.map((entry) => entry.label).join(",") === "Main,Model,Update" && shared.menuIndex === 0)
+eq("settings menu is Main, Model, Update, MCP", SETTINGS_MENU.map((entry) => entry.id).join(","), "main,model,update,mcp")
+ok("main tab carries the left menu", Array.isArray(shared.menu) && shared.menu.map((entry) => entry.label).join(",") === "Main,Model,Update,MCP" && shared.menuIndex === 0)
 const presetItem = shared.items.find((item) => item.ns === "agent-presets")
 ok("default agent preset is a list choice", presetItem && presetItem.kind === "agent-preset" && Array.isArray(presetItem.options) && presetItem.options.length === 2 && presetItem.value === "catgirl-ptc")
 await saveWebSetting(fakeCtx, fakeSettings, presetItem, "default")
 eq("default agent preset persisted", sections.get("agent-presets").default, "default")
 ok("provider config hint stays in main", !shared.items.some((item) => item.kind === "provider") && shared.items.some((item) => item.kind === "provider-config-info"))
-ok("update manager entry in main", shared.items.some((item) => item.kind === "open-update" && item.label === "Update manager" && item.value === "Update tab"))
-ok("web-only appearance/language hidden in TUI", !shared.items.some((item) => item.label === "General · Appearance") && !shared.items.some((item) => item.label === "General · Language"))
+ok("update manager entry in main", shared.items.some((item) => item.kind === "open-update" && item.label === "Update manager" && item.value === "Update"))
+ok("appearance stays hidden, language row is TUI-owned", !shared.items.some((item) => item.label === "General · Appearance") && shared.items.some((item) => item.ns === "tui-locale" && item.field === "preference" && item.label === "Language"))
+ok("language row lists every locale plus system", (() => {
+  const row = shared.items.find((item) => item.ns === "tui-locale")
+  return Array.isArray(row?.options) && row.options.length === 19
+    && row.options[0].value === "system"
+    && row.options.some((option) => option.value === "zh-CN" && option.label === "简体中文")
+    && row.options.some((option) => option.value === "ar")
+})())
 
 // ---- Model tab: merged provider + model settings ----
 const modelTab = await loadModelSettings(fakeCtx)
-ok("model tab carries the left menu", modelTab.menu.map((entry) => entry.label).join(",") === "Main,Model,Update" && modelTab.menuIndex === 1 && modelTab.title === "Model")
+ok("model tab carries the left menu", modelTab.menu.map((entry) => entry.label).join(",") === "Main,Model,Update,MCP" && modelTab.menuIndex === 1 && modelTab.title === "Model")
 ok("default provider choice", modelTab.items.some((item) => item.kind === "default-provider" && item.label === "Default provider" && item.value === "first"))
 ok("default model options come from saved provider models", modelTab.items.some((item) => item.kind === "default-model" && item.label === "Default model" && item.value === "one" && Array.isArray(item.options) && item.options.includes("one") && !item.options.includes("extra-one")))
 const effortItem = modelTab.items.find((item) => item.field === "reasoningEffort")
@@ -357,7 +366,7 @@ eq("provider credential persisted", storedCredentials.get("FIRST_API_KEY"), "new
 await saveWebSetting(fakeCtx, fakeSettings, urlItem, "https://changed.test")
 eq("provider path persisted", sections.get("llm-pi-ai").providers.first.baseURL, "https://changed.test")
 const imageInputItem = modelTab.items.find((item) => item.kind === "input-modalities")
-ok("pi-ai provider exposes default image input", imageInputItem && imageInputItem.options.includes("text + image"))
+ok("pi-ai provider exposes default image input", imageInputItem && imageInputItem.options.map((option) => option.value).includes("text + image"))
 await saveWebSetting(fakeCtx, fakeSettings, imageInputItem, "text + image")
 eq("provider image input persisted", sections.get("llm-pi-ai").providers.first.defaultInput, ["text", "image"])
 // A listed model becomes the default route for its provider.

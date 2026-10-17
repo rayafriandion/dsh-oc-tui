@@ -15,6 +15,11 @@
 // request path is stubbed.
 //
 // Run: node tests/deadline.test.mjs
+// The assertions below are on English chrome text, so the run is pinned to
+// English instead of following the machine locale. DSH_TUI_LOCALE is the same
+// override a user has, and the plugin reads it when it applies.
+process.env.DSH_TUI_LOCALE = "en"
+
 import { EventEmitter } from "node:events"
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"

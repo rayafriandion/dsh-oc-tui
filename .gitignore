@@ -4,3 +4,13 @@ node_modules/
 .sessions/
 *.tgz
 .zcode/
+
+# local scratch — probe scripts, captured frames, personal notes
+.local/
+.tmp-*
+smoke-full.txt
+test-output.txt
+.debug-image-mermaid.md
+.verification-checklist.md
+tests/debug-image.mjs
+tests/debug-mermaid.mjs

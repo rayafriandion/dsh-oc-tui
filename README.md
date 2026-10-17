@@ -1,6 +1,6 @@
 # dsh-oc-tui
 
-**The `0.2.0` line is the visual-experience update, and it is out as a pre-release now** (`0.2.0-pre.9`, on npm's `next` channel): real image rendering, native Mermaid art, and full Markdown run through this plugin's own terminal engine. It needed no `chafa`, `mmdc` or `mdcat` wrapper — the rendering stack is pure npm (`sharp` decodes and scales, `lovely-mermaid` lays out Mermaid) — and which dsh (the harness) builds it serves is spelled out in the compatibility note below. If you have suggestions for specific visual features, please share them in the original issue thread or open a new issue with a title containing `Visual Experience Suggestion`
+**The `0.2.0` line is the visual-experience update, and it is out as a pre-release now** (`0.2.0-pre.11`, on npm's `next` channel): real image rendering, native Mermaid art, and full Markdown run through this plugin's own terminal engine. It needed no `chafa`, `mmdc` or `mdcat` wrapper — the rendering stack is pure npm (`sharp` decodes and scales, `lovely-mermaid` lays out Mermaid) — and which dsh (the harness) builds it serves is spelled out in the compatibility note below. If you have suggestions for specific visual features, please share them in the original issue thread or open a new issue with a title containing `Visual Experience Suggestion`
 
 **_Thank you for your support of the `dsh-oc-tui` plugin!_**
 
@@ -33,6 +33,8 @@ Published on **npm** as [`dsh-oc-tui`](https://www.npmjs.com/package/dsh-oc-tui)
   - [Session stats and the context meter](#session-stats-and-the-context-meter)
   - [The status rail](#the-status-rail)
   - [Settings](#settings)
+  - [Language](#language)
+  - [MCP servers](#mcp-servers)
   - [In-app updates](#in-app-updates)
 - [How it works](#how-it-works)
 - [@dsh-std interop](#dsh-std-interop)
@@ -61,6 +63,8 @@ Published on **npm** as [`dsh-oc-tui`](https://www.npmjs.com/package/dsh-oc-tui)
 | **Status rail (wide windows)** | From 140 columns a right-hand rail carries the expanded status — model, thinking intensity, context, session figures — plus the session's current goal (`/goal`) and its subagent activity, scrollable with `Shift+↑/↓` or the wheel. Narrow windows keep the bottom status row. See [The status rail](#the-status-rail). |
 | **Thinking intensity** | `Tab` cycles the current model's real reasoning levels; `Ctrl+E` opens a slider. The level is applied per request and persisted. |
 | **Shared settings** | The same host settings namespaces the Web UI uses — general, sessions, per-provider model configuration, credentials — persisted to `$DSH_HOME/settings.yaml`. |
+| **18 languages** | Every string the TUI draws — chrome, transcript, dialogs, toasts, command help — comes from a catalog, so the whole interface follows one setting: `Ctrl+P → Language`, or the environment when no preference is stored. English, Chinese (simplified and traditional), Japanese, Korean, German, French, Spanish, Portuguese (Brazil), Italian, Russian, Polish, Dutch, Turkish, Vietnamese, Indonesian, Arabic and Hindi. See [Language](#language). |
+| **MCP servers** | A `Ctrl+P → MCP` tab manages MCP servers from the TUI itself: add or edit `stdio` / `HTTP` / `SSE` servers, remove them, and watch each connection state with the tools it registered. Scope is per user or per project directory, and the bundled `mcp-import` skill lets the model add servers for you. MCP is optional — with no server, a failing server, or no MCP client in the host at all, the TUI runs exactly as before. See [MCP servers](#mcp-servers). |
 | **In-app updates** | Detect and switch versions of `@deepseek-ai/dsh` and `dsh-oc-tui` from inside the TUI, with Windows-safe deferred installs. |
 | **Zero-dependency terminal engine** | Raw mode, alternate screen, a diffing cell buffer, truecolor ANSI, CJK-aware widths, SGR + legacy X10 mouse decoding, and IME caret anchoring. |
 
@@ -310,9 +314,74 @@ When the sections outgrow the window a scrollbar appears in the rail's right edg
 
 - **Main** — General (busy-Enter behaviour, permission preset), Sessions (new session, manage sessions), System (provider API hints, update-manager shortcut, settings file path).
 - **Model** — the default provider/model/reasoning choice, then one group per provider holding its URL, API key, and model list. Pressing `Enter` on **Models** fetches the provider's advertised catalog (`ctx.llm.discoverModels`) and opens a checkbox window; pressing `Enter` on a listed model makes it the default route.
+- **MCP** — see [MCP servers](#mcp-servers).
 - **Update** — see [In-app updates](#in-app-updates).
 
-Only providers you actually added (present in your user settings layer) are listed; a provider that was never added stays hidden. **Default preset** is shown only when the profile mounts an agent-preset roster, because the choice list is that roster — and this plugin deliberately mounts none (see the compatibility note above), so on a stock `tui` profile the row is absent rather than empty. Where a roster *is* mounted, note that a TUI session composes process-wide from the base, so the stored default applies where a session is created from a preset. Web-UI-only options (`ui-theme` appearance, `locale`) are not shown because they have no effect in the TUI.
+Only providers you actually added (present in your user settings layer) are listed; a provider that was never added stays hidden. **Default preset** is shown only when the profile mounts an agent-preset roster, because the choice list is that roster — and this plugin deliberately mounts none (see the compatibility note above), so on a stock `tui` profile the row is absent rather than empty. Where a roster *is* mounted, note that a TUI session composes process-wide from the base, so the stored default applies where a session is created from a preset. Web-UI-only options (`ui-theme` appearance, the Web UI's `locale`) are not shown because they have no effect in the TUI; the TUI's own **Language** row is a separate namespace (`tui-locale`) — see [Language](#language).
+
+### Language
+
+Every user-facing string the TUI draws is looked up in a catalog at paint time: the title screen, header, sidebar, transcript labels, tool rows, composer, status row and rail, settings chrome and values, help overlay, rewind picker, stats window, question and approval boxes, toasts, and the `/help` command descriptions. The language is one setting — **`Ctrl+P` → Main → Language** — with 18 choices plus `System`, labelled in their own script (`简体中文`, `日本語`, `Português (Brasil)`, `العربية`, …). Choosing one repaints immediately; nothing restarts. The choice is stored wherever the running dsh keeps settings — the profile's `cordis.patch.yml` as the `tui-app` row's `locale` field on dsh 0.2.0, or `$DSH_HOME/settings.yaml` as `tui-locale.preference` on 0.1.x — and `System` stores nothing at all, so a later change of OS language is followed.
+
+With `System` selected (the default) the boot resolves the language in this order, first hit wins:
+
+1. `DSH_TUI_LOCALE`
+2. `LANGUAGE`
+3. `LC_ALL` / `LC_MESSAGES` / `LANG`
+4. the OS locale (on Windows, the user's display language)
+5. `en`
+
+Values may be POSIX style (`de_DE.UTF-8`), BCP 47 (`pt-BR`), or a bare language (`zh`, `fr`); matching is case-insensitive, and an alias resolves to the nearest catalog it actually has (`zh`/`zh-Hans` → `zh-CN`, `zh-Hant`/`zh-HK` → `zh-TW`, `pt`/`pt-PT` → `pt-BR`, `in` → `id`). A language with no catalog — Norwegian, say — falls back to English rather than to a neighbour it does not resemble. `DSH_TUI_LOCALE=en` also pins the `--help` text, which is printed before the settings file is read.
+
+English is the source catalog: it defines the key set, every other locale must cover all of it (a test enforces parity in both directions), and any key a locale is missing falls back to English rather than showing a raw key. Plural families go through `Intl.PluralRules`, so Russian and Arabic get their full CLDR forms while English and Chinese use the two or one they have. Product and protocol tokens (`DeepSeek Harness`, `dsh`, `MCP`, `stdio`, `Ctrl+P`, `Tab`, `Esc`, `Enter`, `git`, `npm`, …) stay literal in every locale.
+
+Adding a language is one file: `lib/locales/<id>.js` exporting a flat `{ 'area.key': 'text' }` object, plus an entry in `LOCALES` in `lib/i18n.js`. `npm test` then checks its key coverage, placeholder parity, and plural forms against English.
+
+### MCP servers
+
+`Ctrl+P → MCP` is the TUI's own MCP page. Servers are mounted on the **current session's agent** through the host's MCP client, so the page shows live connection state once a session is open (on the title screen the configuration is still listed, just not connected).
+
+`Enter` on a server edits it, `Add MCP server` starts a new one, and `Delete` (or `Backspace`) on a server row asks y/n before removing the configuration and disconnecting. The form holds:
+
+| Field | Meaning |
+| --- | --- |
+| Name | The tool namespace: 1–32 letters, digits, `-` or `_`. Fixed while editing, because renaming a server is removing one and adding another. |
+| Type | `Local command` (a child process over stdio), `HTTP` (Streamable HTTP), or `SSE` (the legacy HTTP+SSE transport). |
+| Timeout (ms) | Per tool call or resource request; defaults to `30000`. |
+| Command / Arguments / Environment (JSON) | For a local command. Arguments split on whitespace and group with double quotes, or you can paste a JSON array. The environment is a JSON object whose values may be strings, numbers, or booleans. |
+| URL / Headers (JSON) | For `HTTP` and `SSE`. |
+| Scope | `User` (`$DSH_HOME/mcp.json`, every session) or `Path` (a `<path>/.dsh/mcp.json`, sessions whose working directory is inside `<path>`), followed by the `Path` row itself. |
+| Enabled | `off` keeps the configuration but does not connect. |
+
+`Save` writes the record and mounts it right away; a local command inherits the session's working directory.
+
+State rows read `● connected` (no readable tool list), `● N tools`, `… connecting`, `⚠ <reason>`, `○ disabled`, or `○ not connected`, and the tools one server registered are listed indented underneath it. Below the list, the `Config files` rows name every file that was read and whether it exists — the answer to "why is this server here".
+
+**Scope is a property of the file, not a field of the record.** The effective list for a session is the user file plus every `<dir>/.dsh/mcp.json` between the session's working directory and the filesystem root; a nearer file wins a duplicate name. Editing a server and switching its scope moves the record to the other file. Servers are plain JSON:
+
+```json
+{
+  "version": 1,
+  "servers": {
+    "github": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-github"],
+      "env": { "GITHUB_TOKEN": "…" },
+      "timeoutMs": 30000,
+      "enabled": true
+    }
+  }
+}
+```
+
+The TUI re-reads those files while the MCP page is open and remounts what changed, so a server edited in another window — or imported by the model through the bundled **`mcp-import` skill** — appears and connects without restarting the session. The skill ships with the plugin and teaches the model how to add, fix, disable, or remove a server for you.
+
+Environment values and headers are **plain text** in those files, and the page says so on its `Secrets` row: there is no credential vault here and no OAuth.
+
+**MCP is optional by design.** No server configured, a server that refuses to connect, a host whose MCP client is missing, or a config file that will not parse all cost exactly one `⚠` row — sessions, input, and every other feature keep working.
+
+**SSE.** The host's MCP client supports stdio and Streamable HTTP only, so the `SSE` type runs `bin/mcp-sse-bridge.mjs` — a zero-dependency stdio↔legacy-SSE proxy shipped with the plugin — as the child process. The host's tool bridge, reconnect policy, and per-call timeout then apply exactly as they do to a local command.
 
 ### In-app updates
 

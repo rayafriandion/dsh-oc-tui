@@ -49,10 +49,16 @@ Four things that will bite you:
 ```powershell
 foreach ($rel in @('lib\index.js','lib\ui.js','lib\util.js','lib\term.js','lib\metrics.js',
                    'lib\interrupt.js','lib\web-settings.js','lib\updates.js','lib\markdown.js',
-                   'lib\startup.js','lib\mermaid-ascii.js','bin\dsh-oc-tui.js','cordis.patch.yml','lib\splash-opencode.js')) {
+                   'lib\startup.js','lib\mermaid-ascii.js','lib\i18n.js','bin\dsh-oc-tui.js',
+                   'cordis.patch.yml','lib\splash-opencode.js')) {
   $a = (Get-FileHash ".\$rel").Hash
   $b = (Get-FileHash "$env:USERPROFILE\.dsh\profiles\tui\node_modules\dsh-oc-tui\$rel").Hash
   if ($a -ne $b) { "DIFFERS: $rel" }
+}
+# The locale catalogs are one directory: compare them all at once.
+foreach ($f in Get-ChildItem .\lib\locales\*.js) {
+  $b = "$env:USERPROFILE\.dsh\profiles\tui\node_modules\dsh-oc-tui\lib\locales\$($f.Name)"
+  if (-not (Test-Path $b) -or (Get-FileHash $f.FullName).Hash -ne (Get-FileHash $b).Hash) { "DIFFERS: lib\locales\$($f.Name)" }
 }
 ```
 
@@ -97,12 +103,47 @@ this environment. It is a dependency problem, not a defect in the tree: the inst
 do not "fix" them by unpinning the dependency — the pin is what lets the tarball
 install cleanly (see the peer-dependency note in the README).
 
+## Settings must work on both dsh generations
+
+The two dsh lines store settings in structurally different places, and a row that
+exists on only one of them is a shipped bug — this is exactly how the Language row
+went missing from the real `Ctrl+P` menu while every test passed.
+
+- **dsh 0.1.x** (`dsh-settings` provider): a namespace registry. `settings.register(ns,
+  schema)` makes a namespace, `settings.get(ns)` reads it, `describe()` lists it, and
+  the document is `$DSH_HOME/settings.yaml`.
+- **dsh 0.2.0** (`SettingsForms`): *no registry at all*. `register` does not exist;
+  `describe()` projects the **profile entries' Config schemas** into rows, so a setting
+  only appears if the plugin's own exported `Config` declares the field, and the row's
+  `ns` is that entry's `options.id` (usually `tui-app`). A field marked
+  `.volatile()` is written through the running config reference and announced with
+  `loader/volatile-update`, so the value can change without remounting the plugin;
+  the document is the profile's `cordis.patch.yml`.
+
+Every TUI-owned setting is therefore declared in three places, all of which must stay
+in sync:
+
+1. `lib/web-settings.js` → `TUI_SETTINGS` (legacy namespace + field, and the Config
+   field name). This table is the contract; readers and writers go through
+   `resolveTuiSetting()` / `readTuiSetting()` rather than assuming a namespace.
+2. `lib/index.js` → the exported `Config`, with `volatileField(...)` on each.
+3. `lib/web-settings.js` → `WEB_SETTING_SCHEMAS`, for the 0.1.x registry only.
+
+`tests/locale.test.mjs` covers the 0.1.x path and `tests/locale-forms.test.mjs` the
+0.2.0 one. A change to how a setting is read or written belongs in both.
+
 ## Conventions
 
 - Match the surrounding code's comment density. Comments state a constraint the code
   cannot show on its own; they do not narrate what the next line does.
-- User-facing copy in the TUI is Chinese where the surrounding strings are Chinese;
-  code, identifiers, and comments stay English.
+- **User-facing copy is never a literal.** Every string the TUI draws goes through
+  `t()` / `tn()` / `tv()` from `lib/i18n.js` and lives in `lib/locales/en.js`; a new
+  literal in `lib/ui.js` or `lib/index.js` is a bug, and a key added to English
+  without its 17 translations fails `npm test`. Keep `{placeholders}`, leading and
+  trailing spaces, and plural families intact when translating. Product and protocol
+  tokens (`DeepSeek Harness`, `dsh`, `MCP`, `stdio`, `Ctrl+P`, `Tab`, `Esc`, `Enter`,
+  `git`, `npm`) stay literal in every locale. `lib/std/command-list.js` must keep
+  zero imports, so its descriptions are resolved in `lib/index.js` instead.
 - The DeepSeek brand mark is the blue→white gradient text, drawn one line tall. Do
   not reintroduce ASCII-art logo glyphs on the title screen.
 - DSH affordances must stay discoverable on the title screen: `Ctrl+P` for settings
@@ -114,6 +155,8 @@ install cleanly (see the peer-dependency note in the README).
 | --- | --- |
 | `lib/ui.js` | The view model and renderer (App, THEME, all painting) |
 | `lib/index.js` | The plugin entry: cordis apply/inject, key decoding, commands |
+| `lib/i18n.js` | Locale resolution, the catalog registry, `t()` / `tn()` / `tv()` |
+| `lib/locales/*.js` | One flat catalog per language; `en.js` is the source of truth |
 | `lib/term.js` | Screen buffer, styles, and the capability-aware emitter |
 | `lib/image.js` | Halfblock / graphics-protocol image pipeline |
 | `lib/mermaid.js` | Mermaid provider chain (mmdc → mermaid.ink → disk cache) |
