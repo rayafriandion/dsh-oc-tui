@@ -36,13 +36,14 @@ function eq(name, actual, expected) {
 
 // ---- catalog shape --------------------------------------------------------
 
-eq('18 locales are offered', LOCALES.length, 18)
+eq('17 locales are offered', LOCALES.length, 17)
 ok('every locale id is unique', new Set(LOCALES.map((entry) => entry.id)).size === LOCALES.length)
 ok('every locale has a native name and a bcp47 tag', LOCALES.every((entry) => entry.native && entry.bcp47))
 ok('english is the first entry', LOCALES[0].id === 'en')
 ok('every locale ships a catalog', LOCALES.every((entry) => hasLocale(entry.id)))
-ok('chinese, japanese, korean, arabic and hindi are among them',
-  ['zh-CN', 'zh-TW', 'ja', 'ko', 'ar', 'hi'].every((id) => isLocaleId(id)))
+ok('chinese, japanese, korean and arabic are among them',
+  ['zh-CN', 'zh-TW', 'ja', 'ko', 'ar'].every((id) => isLocaleId(id)))
+ok('hindi is not offered', !isLocaleId('hi'))
 
 const sourceKeys = catalogKeys()
 ok('the english source carries the whole UI', sourceKeys.length > 450)

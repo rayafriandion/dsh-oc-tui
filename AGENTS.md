@@ -139,7 +139,7 @@ in sync:
 - **User-facing copy is never a literal.** Every string the TUI draws goes through
   `t()` / `tn()` / `tv()` from `lib/i18n.js` and lives in `lib/locales/en.js`; a new
   literal in `lib/ui.js` or `lib/index.js` is a bug, and a key added to English
-  without its 17 translations fails `npm test`. Keep `{placeholders}`, leading and
+  without its 16 translations fails `npm test`. Keep `{placeholders}`, leading and
   trailing spaces, and plural families intact when translating. Product and protocol
   tokens (`DeepSeek Harness`, `dsh`, `MCP`, `stdio`, `Ctrl+P`, `Tab`, `Esc`, `Enter`,
   `git`, `npm`) stay literal in every locale. `lib/std/command-list.js` must keep

@@ -330,10 +330,11 @@ ok("update manager entry in main", shared.items.some((item) => item.kind === "op
 ok("appearance stays hidden, language row is TUI-owned", !shared.items.some((item) => item.label === "General · Appearance") && shared.items.some((item) => item.ns === "tui-locale" && item.field === "preference" && item.label === "Language"))
 ok("language row lists every locale plus system", (() => {
   const row = shared.items.find((item) => item.ns === "tui-locale")
-  return Array.isArray(row?.options) && row.options.length === 19
+  return Array.isArray(row?.options) && row.options.length === 18
     && row.options[0].value === "system"
     && row.options.some((option) => option.value === "zh-CN" && option.label === "简体中文")
     && row.options.some((option) => option.value === "ar")
+    && !row.options.some((option) => option.value === "hi")
 })())
 
 // ---- Model tab: merged provider + model settings ----
