@@ -681,6 +681,7 @@ ok("title screen", titleRendered.includes("DeepSeek Harness") && titleRendered.i
 ok("title git branch", titleRendered.includes("git: main"))
 ok("title settings hint", titleRendered.includes("Ctrl+P") && titleApp.sessionId === "")
 ok("title hint advertises Tab thinking without effort word", titleRendered.includes("Tab thinking") && !titleRendered.toLowerCase().includes("effort"))
+ok("title hint carries no dead agents affordance", !titleRendered.toLowerCase().includes("agents"))
 
 // Entering the welcome screen must drop the previous session's title.
 const staleTitleApp = new App(fakeTerm)
