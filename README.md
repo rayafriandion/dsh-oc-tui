@@ -83,7 +83,7 @@ dsh --version
 pnpm --version
 ```
 
-**Compatibility.** Verified against dsh `0.2.0-rc.2` and `0.1.2-rc.1` (`0.1.1-rc.2` before that). DSH renamed parts of the session API in 0.1.2 — `Session.events` became `snapshotEvents()` — and this plugin reads whichever accessor the host provides, so one build serves both lines.
+**Compatibility.** Verified against dsh `0.2.1-rc.2`, `0.2.0-rc.2` and `0.1.2-rc.1` (`0.1.1-rc.2` before that). The supported range is declared as `engines.dsh` (`>=0.1.1-rc.2 <0.3.0-0`) in `package.json`: since dsh 0.2.1 the install gate reads that declaration first and ignores the peer list, so a host outside the range is refused at load until its exact version is exempted with `dsh plugin allow-version`. DSH renamed parts of the session API in 0.1.2 — `Session.events` became `snapshotEvents()` — and this plugin reads whichever accessor the host provides, so one build serves both lines.
 
 **dsh (the harness) 0.2.0 is a breaking update — upgrade this plugin first.** From dsh `0.2.0-rc.1` the agent-preset packages were split: the roster provider `@deepseek-ai/dsh-agent-presets` (which shipped its own presets) became `@deepseek-ai/dsh-agent-preset-registry`, and a new `@deepseek-ai/dsh-agent-preset` package is only a *declarative* preset row that injects the service the registry provides. A TUI older than `0.1.5` names the old provider, and dsh reports it at every boot:
 
@@ -224,6 +224,7 @@ It prefers the `dsh` on `PATH` and falls back to `npx --yes @deepseek-ai/dsh`. I
 | `Ctrl+C` | Clear a non-empty prompt, cancel the running turn, or press twice while idle to exit. |
 | `Ctrl+P` | Open Settings. |
 | `Ctrl+E` | Toggle the thinking-intensity slider below the composer. |
+| `Ctrl+G` | Empty page: open the git branch switcher. Inside a session: a note that it is empty-page only. |
 | `Tab` | Session page: cycle the thinking intensity. Settings page: switch the left menu. |
 | `Ctrl+N` | New session. |
 | `Ctrl+D` | In Settings → Manage sessions: delete the focused session (press twice to confirm). |
@@ -240,13 +241,15 @@ It prefers the `dsh` on `PATH` and falls back to `npx --yes @deepseek-ai/dsh`. I
 
 ### Slash commands
 
-Built in: `/help` `/settings` `/new` `/resume <id>` `/model <id>` `/provider <route>` `/rewind` `/stats` `/clear` `/cancel` `/quit` (`/exit` also works).
+Built in: `/help` `/settings` `/new` `/resume <id>` `/model <id>` `/provider <route>` `/rewind` `/branch` `/stats` `/clear` `/cancel` `/quit` (`/exit` also works).
 
 **Rewind.** `Esc Esc` (or `/rewind`) lists the prompts of the live session. Restoring the **conversation** forks a new session from the events before the chosen prompt — the parent session is left untouched on disk, exactly as the harness's own `session/fork` does — and the picker lands on the most recent prompt, so `Enter` twice rewinds the last turn. `/rewind <n|last> [conversation|code|both]` runs it without the picker. The fork starts with an **empty inbox**: a cut before a turn also cuts the inbox claim that turn performed, so anything the parent had queued — including the prompt you rewound away from — is not delivered again; it stays in the parent's log, and the result line says `dropped N inherited pending input` when there was any. Restoring **files** is best-effort and fenced: it needs a git worktree (anywhere else the rewind reports `files not restored (not a git worktree)` and changes nothing), it rewrites tracked files from `HEAD` without touching the index, and it removes an untracked file only when the transcript's first recorded write to that path is at or after the rewind point. Everything it overwrites or deletes is copied to `$DSH_HOME/rewind-backups/<sessionId>/<timestamp>/` first, and the result line names that directory. Because the log stores no file contents, a tracked file returns to its last commit, not to its exact state at the rewind point.
 
 Harness commands — `/compact`, `/goal`, `/plan`, … — are forwarded to `ctx.commands` and run without a model turn. They need a live session: on the title screen the TUI answers `/<name>: start a session first` instead of dropping the command silently.
 
 `/stats` is the TUI's own command: it toggles the [session stats window](#session-stats-and-the-context-meter) and, like the harness commands, needs a live session.
+
+**Git branches.** `Ctrl+G` (or `/branch`) on the empty page opens the branch switcher: local branches under one header, remote-tracking branches under another, the current one carrying git's own `*` marker. `Enter` checks the selected branch out — a remote-tracking branch with no local counterpart goes through the tracking branch git's own DWIM would create for it (`origin/feature` → `feature`), and one whose local branch already exists switches to that one instead. `p` pulls updates (`git fetch --all --prune`, then `git pull --ff-only` — a diverged branch is refused rather than merged, because the TUI has no way to resolve the conflict), `r` re-reads the refs, `Esc` closes. The window reports each outcome on its subtitle line and the title screen's `git:` line follows the switch. Checking out a branch rewrites the working tree every session in the process is rooted in, so the window is offered on the empty page only: inside a session the same shortcut and command answer with a note instead of opening it. Outside a git worktree — or with no `git` on `PATH` — the window says so and changes nothing.
 
 ### Interactive prompts
 
@@ -526,6 +529,7 @@ The plugin's dsh imports resolve through the shared `$DSH_HOME/profiles/node_mod
 | `--resume` or Manage sessions unavailable | Both need the shared `sessionQuery` service; keep `@deepseek-ai/dsh-base` first in `dsh.profile.bundles`. |
 | `no agent factory registered` on `--resume` | A startup race with the agent-loop row; current builds retry it. On an older build, run `/resume <id>` after boot instead. |
 | Loader errors after updating dsh (`State`, `./internal`) | The global dsh install is a mixed old/new tree. Close every dsh process and reinstall: `npm install -g @deepseek-ai/dsh@<version>`. |
+| `incompatible with dsh <version>` wall at every boot | The host is outside the declared `engines.dsh` range. Update this plugin, hold dsh at a supported version, or grant an exact-version exemption (the refusal prints the command): `dsh plugin --profile tui allow-version dsh-oc-tui@<version> --dsh-version <version> --accept-risk`. |
 | Source edits have no effect | The installed copy is a tarball; repack and reinstall (see [Development](#development)). |
 
 More detail, in Chinese: [docs/用户手册.md](docs/用户手册.md).
@@ -536,6 +540,7 @@ More detail, in Chinese: [docs/用户手册.md](docs/用户手册.md).
 - The plugin does not hot-reload: the profile's HMR root is the profile directory, so a running TUI keeps the copy it booted with.
 - `dsh tui` as a bare subcommand needs a shell alias — the stock launcher hardcodes only `web` and `plugin`.
 - Harness slash commands need a live session; on the title screen the TUI tells you to start a session first.
+- The git branch switcher needs `git` on `PATH` and a git worktree as the workspace; anywhere else it reports that and changes nothing. It is an empty-page affordance: with a session open, `Ctrl+G` and `/branch` only point back at the empty page.
 - Deferring a question with `Esc` does not cancel the tool call — it delegates, and with no other answerer the tool call fails. Per-question skip (as the Web UI composer offers) is not implemented.
 - `--resume`, Settings → Manage sessions, the context meter, and the stats strip depend on services mounted by `@deepseek-ai/dsh-base` (`sessionQuery`, `sessionProjections`); a hand-built profile must provide them. The `sessionStats` projection is a web-app-layer row, so the TUI folds those figures from the session log itself when no profile mounts it.
 - An update restart only waits for the TUI that scheduled it: the "no other dsh process" check runs *before* you confirm, so a `dsh web` window opened afterwards can still overlap the install. Close other dsh windows first.
@@ -556,6 +561,7 @@ lib/ui.js            responsive view model + renderer (flat transcript, tool row
 lib/splash-opencode.js title-screen art (OpenCode-style layout, DeepSeek gradient mark)
 lib/metrics.js       whole-session stats + token usage fold (web stats strip / tokenUsage port)
 lib/rewind.js        rewind picker: conversation fork from the event log plus fenced file restore
+lib/git-branch.js    git branch switcher: local/remote listing, checkout, and ff-only pull (git CLI, worktree-fenced)
 lib/interrupt.js     Ctrl+C lifecycle state
 lib/web-settings.js  shared WebUI settings projection (incl. the tui-graphics namespace)
 lib/updates.js       in-app update manager (npm registry, download + staging, install verification)
