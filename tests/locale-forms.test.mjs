@@ -214,6 +214,11 @@ ok("the Language list opens with every locale plus System",
   lastFrame().includes("日本語") && lastFrame().includes("한국어") && lastFrame().includes("System"),
   "last frame:\n" + lastFrame())
 await move(LOCALE_ORDER.indexOf("ja") - LOCALE_ORDER.indexOf("system"))
+// The startup update check is a one-shot timer two seconds after boot and it
+// reads a TUI setting, which describes the form once. Let it land before the
+// counter is reset, or a slow boot puts that timer — not the commit — inside
+// the window this assertion measures.
+await settle(150)
 // Count the page rebuilds the commit itself costs, so the assertion below can
 // tell one from two.
 settings.describes = 0

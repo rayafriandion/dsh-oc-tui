@@ -680,7 +680,7 @@ const titleRendered = titleApp.render().cells.map((r) => r.map((c) => c.ch).join
 ok("title screen", titleRendered.includes("DeepSeek Harness") && titleRendered.includes("D:/Projects/example"))
 ok("title git branch", titleRendered.includes("git: main"))
 ok("title settings hint", titleRendered.includes("Ctrl+P") && titleApp.sessionId === "")
-ok("title hint advertises Tab thinking without effort word", titleRendered.includes("Tab thinking") && !titleRendered.toLowerCase().includes("effort"))
+ok("title hint advertises Tab thinking without effort word", titleRendered.includes("Tab  thinking") && !titleRendered.toLowerCase().includes("effort"))
 ok("title hint carries no dead agents affordance", !titleRendered.toLowerCase().includes("agents"))
 
 // Entering the welcome screen must drop the previous session's title.
@@ -926,20 +926,23 @@ const thinkApp = new App(fakeTerm)
 thinkApp.setSession({ id: "t1", title: "Test" })
 thinkApp.addUser("hi")
 const thinkBlock = thinkApp.ensureAssistantBlock(Date.now())
-thinkBlock.reasoning = "secret reasoning text"
+// Two lines, so "folded" can mean something precise: the first line is the
+// row's gist, everything after it is the body and stays hidden.
+thinkBlock.reasoning = "secret reasoning text\nsecond secret line"
 thinkBlock.text = "the answer"
 thinkBlock.streaming = false
 thinkBlock.thinkingCollapsed = true
 const collapsedRendered = thinkApp.render().cells.map((r) => r.map((c) => c.ch).join("")).join(NL2)
-ok("thinking collapsed by default", collapsedRendered.includes("thinking") && !collapsedRendered.includes("secret reasoning text"))
+ok("thinking collapsed by default", collapsedRendered.includes("thinking"))
+ok("a folded box keeps only its gist line", collapsedRendered.includes("secret reasoning text") && !collapsedRendered.includes("second secret line"))
 ok("thinking click target", thinkApp.hitRegions.some((region) => region.kind === "thinking"))
 const thinkRegion = thinkApp.hitRegions.find((region) => region.kind === "thinking")
 thinkApp.toggleThinking(thinkRegion.thinkingBlock)
 const expandedRendered = thinkApp.render().cells.map((r) => r.map((c) => c.ch).join("")).join(NL2)
-ok("thinking expands on click", expandedRendered.includes("secret reasoning text"))
+ok("thinking expands on click", expandedRendered.includes("second secret line"))
 thinkApp.toggleThinking(thinkRegion.thinkingBlock)
 const recollapsedRendered = thinkApp.render().cells.map((r) => r.map((c) => c.ch).join("")).join(NL2)
-ok("thinking collapses again on click", !recollapsedRendered.includes("secret reasoning text"))
+ok("thinking collapses again on click", !recollapsedRendered.includes("second secret line"))
 
 // Thinking stays collapsed while streaming, and toggle is a no-op until done.
 const streamThink = new App(fakeTerm)

@@ -1,6 +1,6 @@
 # dsh-oc-tui
 
-**The `0.2.0` line is the visual-experience update, and it is out as a pre-release now** (`0.2.0-pre.11`, on npm's `next` channel): real image rendering, native Mermaid art, and full Markdown run through this plugin's own terminal engine. It needed no `chafa`, `mmdc` or `mdcat` wrapper — the rendering stack is pure npm (`sharp` decodes and scales, `lovely-mermaid` lays out Mermaid) — and which dsh (the harness) builds it serves is spelled out in the compatibility note below. If you have suggestions for specific visual features, please share them in the original issue thread or open a new issue with a title containing `Visual Experience Suggestion`
+**`0.2.0` is the visual-experience release** (on npm's `latest` channel): real image rendering, native Mermaid art, and full Markdown run through this plugin's own terminal engine. It needed no `chafa`, `mmdc` or `mdcat` wrapper — the rendering stack is pure npm (`sharp` decodes and scales, `lovely-mermaid` lays out Mermaid) — and which dsh (the harness) builds it serves is spelled out in the compatibility note below. If you have suggestions for specific visual features, please share them in the original issue thread or open a new issue with a title containing `Visual Experience Suggestion`
 
 **_Thank you for your support of the `dsh-oc-tui` plugin!_**
 
@@ -83,7 +83,7 @@ dsh --version
 pnpm --version
 ```
 
-**Compatibility.** Verified against dsh `0.2.1-rc.2`, `0.2.0-rc.2` and `0.1.2-rc.1` (`0.1.1-rc.2` before that). The supported range is declared as `engines.dsh` (`>=0.1.1-rc.2 <0.3.0-0`) in `package.json`: since dsh 0.2.1 the install gate reads that declaration first and ignores the peer list, so a host outside the range is refused at load until its exact version is exempted with `dsh plugin allow-version`. DSH renamed parts of the session API in 0.1.2 — `Session.events` became `snapshotEvents()` — and this plugin reads whichever accessor the host provides, so one build serves both lines.
+**Compatibility.** Verified against dsh `0.2.1-rc.2`, `0.2.0-rc.2` and `0.1.2-rc.1` (`0.1.1-rc.2` before that). `0.2.1-rc.5` was compared package by package: its core is byte-identical to rc.2, and the one display change — reasoning signatures — is handled here as well. The supported range is declared as `engines.dsh` (`>=0.1.1-rc.2 <0.3.0-0`) in `package.json`: since dsh 0.2.1 the install gate reads that declaration first and ignores the peer list, so a host outside the range is refused at load until its exact version is exempted with `dsh plugin allow-version`. DSH renamed parts of the session API in 0.1.2 — `Session.events` became `snapshotEvents()` — and this plugin reads whichever accessor the host provides, so one build serves both lines.
 
 **dsh (the harness) 0.2.0 is a breaking update — upgrade this plugin first.** From dsh `0.2.0-rc.1` the agent-preset packages were split: the roster provider `@deepseek-ai/dsh-agent-presets` (which shipped its own presets) became `@deepseek-ai/dsh-agent-preset-registry`, and a new `@deepseek-ai/dsh-agent-preset` package is only a *declarative* preset row that injects the service the registry provides. A TUI older than `0.1.5` names the old provider, and dsh reports it at every boot:
 
@@ -112,7 +112,7 @@ npm install -g dsh-oc-tui
 
 ### Version channels
 
-npm carries two channels for this package: **`latest`** holds the stable releases, **`next`** the pre-releases (`0.2.0-pre.x`, `-rc`, `-alpha`, `-beta`). Untagged installs — `dsh plugin … add -w dsh-oc-tui` and `npm install -g dsh-oc-tui` above — therefore still give you the newest stable version, never a release candidate. The [awesome-dsh-plugin](https://awesome-dsh-plugin.com/zh/p/rayafriandion/dsh-oc-tui/) marketplace entry links to the same package, so an install started from it lands on the stable channel too.
+npm carries two channels for this package: **`latest`** holds the stable releases, **`next`** the pre-releases (any `-pre`, `-rc`, `-alpha` or `-beta` suffix). Untagged installs — `dsh plugin … add -w dsh-oc-tui` and `npm install -g dsh-oc-tui` above — therefore give you the newest stable version, never a release candidate. Since `0.2.0` the stable channel carries the visual-experience work, so nothing here needs `@next` any more. The [awesome-dsh-plugin](https://awesome-dsh-plugin.com/zh/p/rayafriandion/dsh-oc-tui/) marketplace entry links to the same package, so an install started from it lands on the stable channel too.
 
 To run a pre-release, name the tag: `dsh plugin` forwards the spec to pnpm untouched, and pnpm resolves dist-tags.
 
@@ -316,11 +316,11 @@ When the sections outgrow the window a scrollbar appears in the rail's right edg
 `Ctrl+P` opens a settings menu over the same host settings namespaces as the Web UI, persisted through `ctx.settings` to `$DSH_HOME/settings.yaml`. A left menu splits it into three tabs (`Tab` or click to switch):
 
 - **Main** — General (busy-Enter behaviour, permission preset), Sessions (new session, manage sessions), System (provider API hints, update-manager shortcut, settings file path).
-- **Model** — the default provider/model/reasoning choice, then one group per provider holding its URL, API key, and model list. Pressing `Enter` on **Models** fetches the provider's advertised catalog (`ctx.llm.discoverModels`) and opens a checkbox window; pressing `Enter` on a listed model makes it the default route.
+- **Model** — the default provider/model/reasoning choice, then one group per configured provider holding its API key, URL and model list, and finally **Add provider**. Pressing `Enter` on **Models** fetches the provider's advertised catalog (`ctx.llm.discoverModels`) and opens a checkbox window; pressing `Enter` on a listed model makes it the default route. Inside that window `e` edits the highlighted entry — id, context window, output tokens, input modalities — and `Del` removes it from the provider, while **Refresh catalog** asks the endpoint again and **Add model by id** covers a model it does not advertise. The first row is a whole-selection toggle (`selected/total`); a failed fetch prints the endpoint's own refusal — `answered 401; check the API key`, `could not reach …` — instead of an empty list, and a hand-declared route's first successful fetch arrives with every model already selected. **Add provider** offers the same two paths the Web UI's add card does: adopt a route the installed adapter already ships, or declare a custom endpoint (route id, wire protocol, endpoint, and at least one model). Its top row filters the catalog as you type; the declaring path can interrogate its endpoint with a key that has not been stored yet, so adding a gateway is one pass instead of save-then-return. **Remove provider** deletes the profile and its managed credential.
 - **MCP** — see [MCP servers](#mcp-servers).
 - **Update** — see [In-app updates](#in-app-updates).
 
-Only providers you actually added (present in your user settings layer) are listed; a provider that was never added stays hidden. **Default preset** is shown only when the profile mounts an agent-preset roster, because the choice list is that roster — and this plugin deliberately mounts none (see the compatibility note above), so on a stock `tui` profile the row is absent rather than empty. Where a roster *is* mounted, note that a TUI session composes process-wide from the base, so the stored default applies where a session is created from a preset. Web-UI-only options (`ui-theme` appearance, the Web UI's `locale`) are not shown because they have no effect in the TUI; the TUI's own **Language** row is a separate namespace (`tui-locale`) — see [Language](#language).
+Providers whose profile resolves get a group — including a whole-section route such as DeepSeek, whose profile is the plugin entry's own Config and therefore always exists, so a fresh install can enter its key. A catalog route you have not adopted stays in the add picker instead, and a route authenticated by a sign-in (DeepSeek Account) shows that instead of a key field. **Default preset** is shown only when the profile mounts an agent-preset roster, because the choice list is that roster — and this plugin deliberately mounts none (see the compatibility note above), so on a stock `tui` profile the row is absent rather than empty. Where a roster *is* mounted, note that a TUI session composes process-wide from the base, so the stored default applies where a session is created from a preset. Web-UI-only options (`ui-theme` appearance, the Web UI's `locale`) are not shown because they have no effect in the TUI; the TUI's own **Language** row is a separate namespace (`tui-locale`) — see [Language](#language).
 
 ### Language
 
@@ -564,6 +564,7 @@ lib/rewind.js        rewind picker: conversation fork from the event log plus fe
 lib/git-branch.js    git branch switcher: local/remote listing, checkout, and ff-only pull (git CLI, worktree-fenced)
 lib/interrupt.js     Ctrl+C lifecycle state
 lib/web-settings.js  shared WebUI settings projection (incl. the tui-graphics namespace)
+lib/providers.js     provider directory split, the add-provider draft and its write
 lib/updates.js       in-app update manager (npm registry, download + staging, install verification)
 lib/markdown.js      markdown-it token stream -> styled lines (tables, hljs, links)
 lib/util.js          text/display helpers

@@ -50,7 +50,9 @@ Four things that will bite you:
 foreach ($rel in @('lib\index.js','lib\ui.js','lib\util.js','lib\term.js','lib\metrics.js',
                    'lib\interrupt.js','lib\web-settings.js','lib\updates.js','lib\markdown.js',
                    'lib\startup.js','lib\mermaid-ascii.js','lib\i18n.js','bin\dsh-oc-tui.js',
-                   'cordis.patch.yml','lib\splash-opencode.js')) {
+                   'cordis.patch.yml','lib\splash-opencode.js','lib\diagnostics.js',
+                   'lib\image.js','lib\mermaid.js','lib\providers.js','lib\git-branch.js',
+                   'dsh-plugin.json')) {
   $a = (Get-FileHash ".\$rel").Hash
   $b = (Get-FileHash "$env:USERPROFILE\.dsh\profiles\tui\node_modules\dsh-oc-tui\$rel").Hash
   if ($a -ne $b) { "DIFFERS: $rel" }
@@ -155,6 +157,7 @@ in sync:
 | --- | --- |
 | `lib/ui.js` | The view model and renderer (App, THEME, all painting) |
 | `lib/index.js` | The plugin entry: cordis apply/inject, key decoding, commands |
+| `lib/git-branch.js` | Git branch switcher core: local/remote listing, checkout, ff-only pull (spawns `git`, worktree-fenced) |
 | `lib/i18n.js` | Locale resolution, the catalog registry, `t()` / `tn()` / `tv()` |
 | `lib/locales/*.js` | One flat catalog per language; `en.js` is the source of truth |
 | `lib/term.js` | Screen buffer, styles, and the capability-aware emitter |

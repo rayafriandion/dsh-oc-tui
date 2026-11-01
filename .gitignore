@@ -14,3 +14,7 @@ test-output.txt
 .verification-checklist.md
 tests/debug-image.mjs
 tests/debug-mermaid.mjs
+
+# editor working notes and per-release draft notes — never part of the package
+.workbuddy/
+.release-notes-*.md
