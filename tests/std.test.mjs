@@ -114,7 +114,7 @@ eq("no live TUI initially", liveTui(), null)
   // drops (its projection keeps only { title }). Without placements a command is
   // publishable on every surface, so a web UI would list /settings too.
   const commands = facet.extensions.filter((e) => e.kind === "Command")
-  eq("nine TUI-owned commands contributed", commands.length, 9)
+  eq("ten TUI-owned commands contributed", commands.length, 10)
   ok("every command is scoped to the TUI command line",
     commands.every((e) => JSON.stringify(e.spec.placements)
       === JSON.stringify([{ apiVersion: "tui.dsh/v1alpha1", kind: "CommandLine" }])))
@@ -123,7 +123,7 @@ eq("no live TUI initially", liveTui(), null)
 
   const names = commands.map((e) => e.metadata.name).sort()
   eq("contributed command names", names,
-    ["cancel", "clear", "help", "new", "quit", "resume", "rewind", "settings", "stats"])
+    ["branch", "cancel", "clear", "help", "new", "quit", "resume", "rewind", "settings", "stats"])
   // /model and /provider are deliberately absent: runCommand asks
   // ctx.commands.find() first, so the harness owns them when it registers them.
   ok("model and provider are not claimed", !names.includes("model") && !names.includes("provider"))

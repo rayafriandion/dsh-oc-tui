@@ -3,3 +3,18 @@ node_modules/
 .DS_Store
 .sessions/
 *.tgz
+.zcode/
+
+# local scratch — probe scripts, captured frames, personal notes
+.local/
+.tmp-*
+smoke-full.txt
+test-output.txt
+.debug-image-mermaid.md
+.verification-checklist.md
+tests/debug-image.mjs
+tests/debug-mermaid.mjs
+
+# editor working notes and per-release draft notes — never part of the package
+.workbuddy/
+.release-notes-*.md

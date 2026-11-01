@@ -23,7 +23,7 @@ const ok = (name, cond) => cond ? console.log("ok   " + name) : (console.log("FA
 // ---- util ----
 eq("displayWidth CJK", displayWidth("中文a"), 5)
 eq("roughTokens", roughTokens("你好world"), 3)
-eq("truncateWidth", truncateWidth("hello world", 5), "hello")
+eq("truncateWidth marks the cut", truncateWidth("hello world", 5), "hell…")
 eq("shortenPath keeps a short path", shortenPath("D:\\a\\b", 20), "D:\\a\\b")
 eq("shortenPath elides whole head segments", shortenPath("D:\\Projects\\dsh-oc-tui", 12), "…\\dsh-oc-tui")
 eq("shortenPath keeps the deepest segments that fit", shortenPath("D:\\Projects\\DeepSeekHarnessPlugins", 30), "…\\DeepSeekHarnessPlugins")
@@ -34,6 +34,24 @@ eq("shortenPath is cell aware for CJK", displayWidth(shortenPath("D:\\项目\\�
 eq("shortenPath gives up when there is no room", shortenPath("D:\\a\\b", 1), "")
 eq("shortenPath on an empty path", shortenPath("", 20), "")
 eq("wrapText", wrapText("a b c d e", 5), ["a b c", "d e"])
+eq("displayWidth of a joined emoji", displayWidth("👨‍👩‍👧"), 2)
+eq("displayWidth of a toned emoji", displayWidth("👍🏽"), 2)
+eq("displayWidth of an emoji-presentation emoji", displayWidth("🌡️"), 2)
+// A variation selector after a narrow base — not one the wide table already
+// covers — still asks for two cells, and only measuring the cluster sees it.
+eq("displayWidth of a variation-selected narrow emoji", displayWidth("☀️ fine"), 7)
+eq("displayWidth of a variation-selected heart", displayWidth("❤️"), 2)
+eq("displayWidth of a variation-selected check", displayWidth("✔️ ok"), 5)
+const wrapped = wrapText("☀️ fine", 4)
+eq("wrapText never cuts an emoji presentation in half",
+  wrapped.every((l) => displayWidth(l) <= 4) && wrapped.join("").replace(/ /g, "") === "☀️fine", true, wrapped)
+eq("truncateWidth keeps an emoji presentation whole", truncateWidth("✔️ ok", 3), "✔️…")
+eq("displayWidth of a flag", displayWidth("🇺🇸"), 2)
+eq("displayWidth of a lone modifier", displayWidth("\u{1F3FB}"), 0)
+eq("displayWidth of a combining accent", displayWidth("e\u0301"), 1)
+eq("displayWidth of a plain text emoji", displayWidth("🌡 sensor"), 9)
+eq("wrapText reads a joined emoji as one cell", wrapText("👨‍👩‍👧 hello", 8), ["👨‍👩‍👧 hello"])
+eq("truncateWidth keeps a joined emoji whole", truncateWidth("👨‍👩‍👧 x", 3), "👨‍👩‍👧…")
 eq("contentText includes reasoning", contentText([{ type: "reasoning", text: "hidden" }, { type: "text", text: "visible" }]), "hiddenvisible")
 eq("contentText skips reasoning", contentText([{ type: "reasoning", text: "hidden" }, { type: "text", text: "visible" }], { skipReasoning: true }), "visible")
 eq("timeString carries full date", /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(timeString(0)), true)
@@ -91,7 +109,9 @@ eq("toolSummary no args", toolSummary("read"), "read")
 // ---- decodeKey ----
 eq("Enter", decodeKey(Buffer.from([0x0d])), { key: { name: "return" }, consumed: 1 })
 eq("Ctrl+D", decodeKey(Buffer.from([0x04])), { key: { name: "d", ctrl: true }, consumed: 1 })
-eq("Up", decodeKey(Buffer.from([0x1b, 0x5b, 0x41])), { key: { name: "up" }, consumed: 3 })
+eq("Up", decodeKey(Buffer.from([0x1b, 0x5b, 0x41])), { key: { name: "up", shift: false, alt: false, ctrl: false }, consumed: 3 })
+eq("Shift+Up", decodeKey(Buffer.from("\x1b[1;2A")), { key: { name: "up", shift: true, alt: false, ctrl: false }, consumed: 6 })
+eq("Ctrl+Down", decodeKey(Buffer.from("\x1b[1;5B")), { key: { name: "down", shift: false, alt: false, ctrl: true }, consumed: 6 })
 eq("PgUp", decodeKey(Buffer.from([0x1b, 0x5b, 0x35, 0x7e])), { key: { name: "pageup" }, consumed: 4 })
 eq("ESC alone", decodeKey(Buffer.from([0x1b])), { key: { name: "escape" }, consumed: 1 })
 eq("printable", decodeKey(Buffer.from("a")), { key: { name: "a", text: "a" }, consumed: 1 })
@@ -234,6 +254,8 @@ const fakeSettings = {
     if (ns === "locale") sections.set(ns, {})
     if (ns === "ui-conversation") sections.set(ns, { busyEnter: "queue" })
     if (ns === "tui-updates") sections.set(ns, { startupCheck: "on" })
+    if (ns === "tui-locale") sections.set(ns, { preference: "system" })
+    if (ns === "tui-graphics") sections.set(ns, { graphics: "auto", imageFallback: "halfblock", imageMaxRows: "20", mermaid: "auto" })
     userSections.set(ns, structuredClone(sections.get(ns)))
     revisions.set(ns, 0)
   },
@@ -296,20 +318,28 @@ ok("main settings loaded", shared.items.some((item) => item.label === "Busy Ente
 ok("model items moved to the Model tab", !shared.items.some((item) => item.label === "Default model" || item.label === "Default provider" || item.field === "reasoningEffort"))
 ok("manage sessions setting", shared.items.some((item) => item.kind === "manage-sessions" && item.label === "Manage sessions"))
 ok("new session setting", shared.items.some((item) => item.kind === "new-session" && item.label === "New session"))
-eq("main tab headers", shared.items.filter((item) => item.kind === "header").map((item) => item.label).join(","), "General,Sessions,System")
-eq("settings menu is Main, Model, Update", SETTINGS_MENU.map((entry) => entry.id).join(","), "main,model,update")
-ok("main tab carries the left menu", Array.isArray(shared.menu) && shared.menu.map((entry) => entry.label).join(",") === "Main,Model,Update" && shared.menuIndex === 0)
+eq("main tab headers", shared.items.filter((item) => item.kind === "header").map((item) => item.label).join(","), "General,Graphics,Sessions,System")
+eq("settings menu is Main, Model, Update, MCP", SETTINGS_MENU.map((entry) => entry.id).join(","), "main,model,update,mcp")
+ok("main tab carries the left menu", Array.isArray(shared.menu) && shared.menu.map((entry) => entry.label).join(",") === "Main,Model,Update,MCP" && shared.menuIndex === 0)
 const presetItem = shared.items.find((item) => item.ns === "agent-presets")
 ok("default agent preset is a list choice", presetItem && presetItem.kind === "agent-preset" && Array.isArray(presetItem.options) && presetItem.options.length === 2 && presetItem.value === "catgirl-ptc")
 await saveWebSetting(fakeCtx, fakeSettings, presetItem, "default")
 eq("default agent preset persisted", sections.get("agent-presets").default, "default")
 ok("provider config hint stays in main", !shared.items.some((item) => item.kind === "provider") && shared.items.some((item) => item.kind === "provider-config-info"))
-ok("update manager entry in main", shared.items.some((item) => item.kind === "open-update" && item.label === "Update manager" && item.value === "Update tab"))
-ok("web-only appearance/language hidden in TUI", !shared.items.some((item) => item.label === "General · Appearance") && !shared.items.some((item) => item.label === "General · Language"))
+ok("update manager entry in main", shared.items.some((item) => item.kind === "open-update" && item.label === "Update manager" && item.value === "Update"))
+ok("appearance stays hidden, language row is TUI-owned", !shared.items.some((item) => item.label === "General · Appearance") && shared.items.some((item) => item.ns === "tui-locale" && item.field === "preference" && item.label === "Language"))
+ok("language row lists every locale plus system", (() => {
+  const row = shared.items.find((item) => item.ns === "tui-locale")
+  return Array.isArray(row?.options) && row.options.length === 18
+    && row.options[0].value === "system"
+    && row.options.some((option) => option.value === "zh-CN" && option.label === "简体中文")
+    && row.options.some((option) => option.value === "ar")
+    && !row.options.some((option) => option.value === "hi")
+})())
 
 // ---- Model tab: merged provider + model settings ----
 const modelTab = await loadModelSettings(fakeCtx)
-ok("model tab carries the left menu", modelTab.menu.map((entry) => entry.label).join(",") === "Main,Model,Update" && modelTab.menuIndex === 1 && modelTab.title === "Model")
+ok("model tab carries the left menu", modelTab.menu.map((entry) => entry.label).join(",") === "Main,Model,Update,MCP" && modelTab.menuIndex === 1 && modelTab.title === "Model")
 ok("default provider choice", modelTab.items.some((item) => item.kind === "default-provider" && item.label === "Default provider" && item.value === "first"))
 ok("default model options come from saved provider models", modelTab.items.some((item) => item.kind === "default-model" && item.label === "Default model" && item.value === "one" && Array.isArray(item.options) && item.options.includes("one") && !item.options.includes("extra-one")))
 const effortItem = modelTab.items.find((item) => item.field === "reasoningEffort")
@@ -337,7 +367,7 @@ eq("provider credential persisted", storedCredentials.get("FIRST_API_KEY"), "new
 await saveWebSetting(fakeCtx, fakeSettings, urlItem, "https://changed.test")
 eq("provider path persisted", sections.get("llm-pi-ai").providers.first.baseURL, "https://changed.test")
 const imageInputItem = modelTab.items.find((item) => item.kind === "input-modalities")
-ok("pi-ai provider exposes default image input", imageInputItem && imageInputItem.options.includes("text + image"))
+ok("pi-ai provider exposes default image input", imageInputItem && imageInputItem.options.map((option) => option.value).includes("text + image"))
 await saveWebSetting(fakeCtx, fakeSettings, imageInputItem, "text + image")
 eq("provider image input persisted", sections.get("llm-pi-ai").providers.first.defaultInput, ["text", "image"])
 // A listed model becomes the default route for its provider.
@@ -650,7 +680,8 @@ const titleRendered = titleApp.render().cells.map((r) => r.map((c) => c.ch).join
 ok("title screen", titleRendered.includes("DeepSeek Harness") && titleRendered.includes("D:/Projects/example"))
 ok("title git branch", titleRendered.includes("git: main"))
 ok("title settings hint", titleRendered.includes("Ctrl+P") && titleApp.sessionId === "")
-ok("title hint advertises Tab thinking without effort word", titleRendered.includes("Tab thinking") && !titleRendered.toLowerCase().includes("effort"))
+ok("title hint advertises Tab thinking without effort word", titleRendered.includes("Tab  thinking") && !titleRendered.toLowerCase().includes("effort"))
+ok("title hint carries no dead agents affordance", !titleRendered.toLowerCase().includes("agents"))
 
 // Entering the welcome screen must drop the previous session's title.
 const staleTitleApp = new App(fakeTerm)
@@ -696,7 +727,7 @@ eq("single session title in header", (headerRows.match(/Test/g) ?? []).length, 1
 ok("session id hidden from header", !headerRows.includes("t1"))
 // user block
 const rendered = screen.cells.map((r) => r.map((c) => c.ch).join("")).join(NL2)
-ok("user label", rendered.includes("You"))
+ok("user pointer marks the turn", rendered.includes("❯ ") && !rendered.includes("you ·"))
 eq("single assistant header per request", (rendered.match(/dsh\s+·/g) ?? []).length, 1)
 ok("no left session rail", !rendered.includes("Test session"))
 ok("multiline composer", rendered.includes("first line") && rendered.includes("second line"))
@@ -731,7 +762,7 @@ ok("main tab drops model settings", !settingsRendered.includes("Default model"))
 // Grouped settings: section headers render as their own rows and the
 // selection / hit regions never rest on them.
 ok("settings groups rendered", settingsRendered.includes("GENERAL") && settingsRendered.includes("SESSIONS") && settingsRendered.includes("SYSTEM") && !settingsRendered.includes("MODELS"))
-ok("settings items are grouped", refreshedShared.items.filter((item) => item.kind === "header").map((item) => item.label).join(",") === "General,Sessions,System")
+ok("settings items are grouped", refreshedShared.items.filter((item) => item.kind === "header").map((item) => item.label).join(",") === "General,Graphics,Sessions,System")
 ok("selection skips headers", app.settingsItems[app.settingsSelection]?.kind !== "header" && app.settingsSelection === refreshedShared.items.findIndex((item) => item.kind !== "header"))
 ok("header rows carry no hit region", !app.hitRegions.some((region) => region.kind === "settings-item" && app.settingsItems[region.settingsIndex]?.kind === "header"))
 ok("mouse settings targets", app.hitRegions.some((region) => region.kind === "settings-item" && region.settingsIndex === app.settingsSelection))
@@ -813,7 +844,9 @@ const helloX = selRows[userY].indexOf("hello")
 selApp.startTextSelection(helloX, userY)
 selApp.updateTextSelection(wordX + "selectable".length - 1, answerY)
 const multiSel = selApp.selectionText().split(NL2)
-eq("multi-row selection first line", multiSel[0], "hello world")
+// The pointer row carries a trailing timestamp, so a drag that reaches the end
+// of the line takes it along — the text itself still starts the selection.
+ok("multi-row selection first line starts at the user text", multiSel[0].startsWith("hello world"))
 eq("multi-row selection last line", multiSel.at(-1), "  selectable")
 // Wide runes: continuation cells are skipped, CJK survives the copy intact.
 const cjkApp = new App(fakeTerm)
@@ -893,20 +926,23 @@ const thinkApp = new App(fakeTerm)
 thinkApp.setSession({ id: "t1", title: "Test" })
 thinkApp.addUser("hi")
 const thinkBlock = thinkApp.ensureAssistantBlock(Date.now())
-thinkBlock.reasoning = "secret reasoning text"
+// Two lines, so "folded" can mean something precise: the first line is the
+// row's gist, everything after it is the body and stays hidden.
+thinkBlock.reasoning = "secret reasoning text\nsecond secret line"
 thinkBlock.text = "the answer"
 thinkBlock.streaming = false
 thinkBlock.thinkingCollapsed = true
 const collapsedRendered = thinkApp.render().cells.map((r) => r.map((c) => c.ch).join("")).join(NL2)
-ok("thinking collapsed by default", collapsedRendered.includes("thinking") && !collapsedRendered.includes("secret reasoning text"))
+ok("thinking collapsed by default", collapsedRendered.includes("thinking"))
+ok("a folded box keeps only its gist line", collapsedRendered.includes("secret reasoning text") && !collapsedRendered.includes("second secret line"))
 ok("thinking click target", thinkApp.hitRegions.some((region) => region.kind === "thinking"))
 const thinkRegion = thinkApp.hitRegions.find((region) => region.kind === "thinking")
 thinkApp.toggleThinking(thinkRegion.thinkingBlock)
 const expandedRendered = thinkApp.render().cells.map((r) => r.map((c) => c.ch).join("")).join(NL2)
-ok("thinking expands on click", expandedRendered.includes("secret reasoning text"))
+ok("thinking expands on click", expandedRendered.includes("second secret line"))
 thinkApp.toggleThinking(thinkRegion.thinkingBlock)
 const recollapsedRendered = thinkApp.render().cells.map((r) => r.map((c) => c.ch).join("")).join(NL2)
-ok("thinking collapses again on click", !recollapsedRendered.includes("secret reasoning text"))
+ok("thinking collapses again on click", !recollapsedRendered.includes("second secret line"))
 
 // Thinking stays collapsed while streaming, and toggle is a no-op until done.
 const streamThink = new App(fakeTerm)
@@ -928,7 +964,7 @@ streamThink.toggleThinking(streamBlock)
 const expandedAfterStream = streamThink.render().cells.map((r) => r.map((c) => c.ch).join("")).join(NL2)
 ok("thinking expandable after streaming", expandedAfterStream.includes("live streaming reasoning"))
 
-// Context notes render as thinking-style collapsible boxes with their own palettes.
+// Context notes render as thinking-style collapsible rows with their own palettes.
 const noteApp = new App(fakeTerm)
 noteApp.setSession({ id: "t1", title: "Test" })
 noteApp.addNote("Additional instructions from: AGENTS.md", "system-reminder")
@@ -946,8 +982,10 @@ const noteRecollapsed = noteApp.render().cells.map((r) => r.map((c) => c.ch).joi
 ok("note collapses again on click", !noteRecollapsed.includes("Additional instructions"))
 const hexRgb = (hex) => [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16))
 const rgbDist = (a, b) => Math.hypot(...hexRgb(a).map((v, i) => v - hexRgb(b)[i]))
-ok("note palettes differ from thinking background", THEME.reminderBg !== THEME.compactionBg && THEME.reminderBg !== THEME.backgroundElement && THEME.compactionBg !== THEME.backgroundElement)
-ok("note backgrounds are visually distinct", rgbDist(THEME.reminderBg, THEME.backgroundElement) > 40 && rgbDist(THEME.compactionBg, THEME.backgroundElement) > 40 && rgbDist(THEME.reminderBg, THEME.compactionBg) > 40)
+// The rows are flat now, so a note is told apart by its text color alone: each
+// label keeps its own hue, and none of them borrows the thinking row's.
+ok("note palettes differ from thinking", THEME.reminder !== THEME.compaction && THEME.reminder !== THEME.thinking && THEME.compaction !== THEME.thinking)
+ok("note colors are visually distinct", rgbDist(THEME.reminder, THEME.compaction) > 40 && rgbDist(THEME.reminder, THEME.thinking) > 40 && rgbDist(THEME.compaction, THEME.thinking) > 40)
 
 // ---- context meter (web ContextMeter port) ----
 const meterApp = new App(fakeTerm)
@@ -1031,11 +1069,17 @@ narrowStripApp.setMetrics(metricsSnapshot)
 const narrowStripRow = narrowStripApp.render().cells.map((r) => r.map((c) => c.ch).join("")).find((line) => line.includes("▤"))
 ok("narrow strip keeps whole groups and elides", narrowStripRow.includes("1 turn · 2 steps") && narrowStripRow.includes("│…") && !narrowStripRow.includes("cache"))
 ok("narrow strip never cuts a figure in half", !narrowStripRow.includes("cach"))
-const wideStripApp = new App({ cols: 140, rows: 30, started: true })
+// "Wide" for the strip means just under the status-rail threshold: at rail
+// widths the rail carries the figures expanded and the strip drops out whole.
+const wideStripApp = new App({ cols: 119, rows: 30, started: true })
 wideStripApp.setSession({ id: "t1", title: "Test" })
 wideStripApp.setMetrics(metricsSnapshot)
 const wideStripRow = wideStripApp.render().cells.map((r) => r.map((c) => c.ch).join("")).find((line) => line.includes("▤"))
 ok("wide strip advertises the command", wideStripRow.includes("/stats") && !wideStripRow.includes("│…"))
+const railWidthApp = new App({ cols: 140, rows: 30, started: true })
+railWidthApp.setSession({ id: "t1", title: "Test" })
+railWidthApp.setMetrics(metricsSnapshot)
+ok("status rail replaces the strip on wide windows", !railWidthApp.render().cells.some((r) => r.map((c) => c.ch).join("").includes("▤")))
 // A session with nothing to report keeps the row for the transcript.
 const emptyStatsApp = new App(fakeTerm)
 emptyStatsApp.setSession({ id: "t1", title: "Test" })
@@ -1090,7 +1134,10 @@ gapAssistant.streaming = false
 const gapRows = gapApp.render().cells.map((r) => r.map((c) => c.ch).join(""))
 const thinkIdx = gapRows.findIndex((r) => r.includes("thinking"))
 const answerIdx = gapRows.findIndex((r) => r.includes("answer"))
-ok("blank line separates thinking box from answer", thinkIdx >= 0 && answerIdx === thinkIdx + 2 && gapRows[thinkIdx + 1].trim() === "")
+// A blank line separates a collapsed thinking row from the visible answer, and
+// the answer's own `dsh · time` label sits between them.
+ok("thinking row sits right above the answer label", thinkIdx >= 0 && answerIdx === thinkIdx + 3
+  && gapRows[thinkIdx + 1].trim() === "" && gapRows[thinkIdx + 2].includes("dsh"))
 
 // ---- theme / activity animation ----
 const SPINNER = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
@@ -1174,7 +1221,8 @@ ok("title blue-white gradient", gradRow >= 0 && gradColors.size >= 2)
 ok("theme is DeepSeek blue-white, no orange", THEME.primary === "4d6bfe" && !Object.values(THEME).some((c) => String(c).toLowerCase() === "fab283"))
 
 // assistant/message semantics: the visible text excludes reasoning, which
-// stays in its own box (so the box does not "disappear" into plain output).
+// stays in its own collapsible row (so it does not "disappear" into plain
+// output).
 const msgApp = new App(fakeTerm)
 msgApp.setSession({ id: "t1", title: "Test" })
 msgApp.addUser("hi")
