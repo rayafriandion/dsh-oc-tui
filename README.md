@@ -1,11 +1,5 @@
 # dsh-oc-tui
 
-**`0.2.0` is the visual-experience release** (on npm's `latest` channel): real image rendering, native Mermaid art, and full Markdown run through this plugin's own terminal engine. It needed no `chafa`, `mmdc` or `mdcat` wrapper — the rendering stack is pure npm (`sharp` decodes and scales, `lovely-mermaid` lays out Mermaid) — and which dsh (the harness) builds it serves is spelled out in the compatibility note below. If you have suggestions for specific visual features, please share them in the original issue thread or open a new issue with a title containing `Visual Experience Suggestion`
-
-**_Thank you for your support of the `dsh-oc-tui` plugin!_**
-
----
-
 **A terminal UI for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)** — an opencode-inspired chat client that boots inside the `dsh` process as a profile app plugin.
 
 [![npm latest](https://img.shields.io/npm/v/dsh-oc-tui?label=npm&color=BF392B)](https://www.npmjs.com/package/dsh-oc-tui)
