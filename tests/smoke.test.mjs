@@ -119,6 +119,9 @@ eq("CJK printable", decodeKey(Buffer.from("中", "utf8")), { key: { name: "中",
 eq("Shift+Enter CSI-u", decodeKey(Buffer.from("\x1b[13;2u")), { key: { name: "enter", shift: true }, consumed: 7 })
 eq("Ctrl+Enter CSI-u", decodeKey(Buffer.from("\x1b[13;5u")), { key: { name: "enter", ctrl: true }, consumed: 7 })
 eq("Ctrl+Enter LF", decodeKey(Buffer.from([0x0a])), { key: { name: "enter", ctrl: true }, consumed: 1 })
+eq("Alt+Enter CSI-u", decodeKey(Buffer.from("\x1b[13;3u")), { key: { name: "enter", alt: true }, consumed: 7 })
+eq("Ctrl+Enter modifyOtherKeys", decodeKey(Buffer.from("\x1b[27;5;13~")), { key: { name: "enter", ctrl: true }, consumed: 10 })
+eq("Shift+Enter modifyOtherKeys", decodeKey(Buffer.from("\x1b[27;2;13~")), { key: { name: "enter", shift: true }, consumed: 10 })
 eq("Alt+Enter legacy", decodeKey(Buffer.from([0x1b, 0x0d])), { key: { name: "enter", shift: true }, consumed: 2 })
 eq("Ctrl+comma CSI-u", decodeKey(Buffer.from("\x1b[44;5u")), { key: { name: ",", ctrl: true }, consumed: 7 })
 eq("mouse left down", decodeKey(Buffer.from("\x1b[<0;12;7M")), { key: { name: "mouse", mouse: { x: 11, y: 6, button: "left", action: "down", shift: false, alt: false, ctrl: false } }, consumed: 10 })
@@ -154,6 +157,8 @@ eq("markdown unordered markers use stable ASCII width", unorderedText, ["- one",
 eq("noteFromContext system-reminder", noteFromContext({ kind: "plugin", plugin: "agent-instructions" }, "<system-reminder>Additional instructions</system-reminder>"), { label: "system-reminder", text: "Additional instructions" })
 eq("noteFromContext system-reminder strips every frame", noteFromContext({ kind: "plugin", plugin: "skill" }, "<system-reminder>one</system-reminder>\n<system-reminder>two</system-reminder>"), { label: "system-reminder", text: "one\ntwo" })
 eq("noteFromContext compaction checkpoint", noteFromContext({ kind: "plugin", plugin: "compact", compactionId: "c1" }, "checkpoint preamble\n<compacted-summary>\nsummary body\n</compacted-summary>"), { label: "compaction", text: "checkpoint preamble\n\nsummary body" })
+eq("noteFromContext compact checkpoint source", noteFromContext({ kind: "compact-checkpoint" }, "checkpoint body"), { label: "compaction", text: "checkpoint body" })
+eq("noteFromContext compact summary source", noteFromContext({ kind: "compact-summary" }, "summary body"), { label: "compaction", text: "summary body" })
 eq("noteFromContext other plugin stays plain", noteFromContext({ kind: "plugin", plugin: "other" }, "plain text"), null)
 eq("noteFromContext non-string stays plain", noteFromContext({ kind: "plugin", plugin: "compact" }, 42), null)
 
@@ -727,8 +732,8 @@ eq("single session title in header", (headerRows.match(/Test/g) ?? []).length, 1
 ok("session id hidden from header", !headerRows.includes("t1"))
 // user block
 const rendered = screen.cells.map((r) => r.map((c) => c.ch).join("")).join(NL2)
-ok("user pointer marks the turn", rendered.includes("❯ ") && !rendered.includes("you ·"))
-eq("single assistant header per request", (rendered.match(/dsh\s+·/g) ?? []).length, 1)
+ok("user panel marks the turn", rendered.includes("┃  ") && !rendered.includes("you ·"))
+eq("single assistant footer per request", (rendered.match(/▣  dsh/g) ?? []).length, 1)
 ok("no left session rail", !rendered.includes("Test session"))
 ok("multiline composer", rendered.includes("first line") && rendered.includes("second line"))
 ok("stats strip renders above the composer", rendered.includes("TTFT avg 400ms"))
@@ -844,10 +849,9 @@ const helloX = selRows[userY].indexOf("hello")
 selApp.startTextSelection(helloX, userY)
 selApp.updateTextSelection(wordX + "selectable".length - 1, answerY)
 const multiSel = selApp.selectionText().split(NL2)
-// The pointer row carries a trailing timestamp, so a drag that reaches the end
-// of the line takes it along — the text itself still starts the selection.
+// User text remains selectable inside its padded panel.
 ok("multi-row selection first line starts at the user text", multiSel[0].startsWith("hello world"))
-eq("multi-row selection last line", multiSel.at(-1), "  selectable")
+eq("multi-row selection last line", multiSel.at(-1), "     selectable")
 // Wide runes: continuation cells are skipped, CJK survives the copy intact.
 const cjkApp = new App(fakeTerm)
 cjkApp.setSession({ id: "t1", title: "Test" })
@@ -1067,7 +1071,7 @@ const narrowStripApp = new App({ cols: 60, rows: 30, started: true })
 narrowStripApp.setSession({ id: "t1", title: "Test" })
 narrowStripApp.setMetrics(metricsSnapshot)
 const narrowStripRow = narrowStripApp.render().cells.map((r) => r.map((c) => c.ch).join("")).find((line) => line.includes("▤"))
-ok("narrow strip keeps whole groups and elides", narrowStripRow.includes("1 turn · 2 steps") && narrowStripRow.includes("│…") && !narrowStripRow.includes("cache"))
+ok("narrow strip keeps whole groups and elides", narrowStripRow.includes("1 turn · 2 steps") && narrowStripRow.includes(" …") && !narrowStripRow.includes("cache"))
 ok("narrow strip never cuts a figure in half", !narrowStripRow.includes("cach"))
 // "Wide" for the strip means just under the status-rail threshold: at rail
 // widths the rail carries the figures expanded and the strip drops out whole.
@@ -1075,7 +1079,7 @@ const wideStripApp = new App({ cols: 119, rows: 30, started: true })
 wideStripApp.setSession({ id: "t1", title: "Test" })
 wideStripApp.setMetrics(metricsSnapshot)
 const wideStripRow = wideStripApp.render().cells.map((r) => r.map((c) => c.ch).join("")).find((line) => line.includes("▤"))
-ok("wide strip advertises the command", wideStripRow.includes("/stats") && !wideStripRow.includes("│…"))
+ok("wide strip advertises the command", wideStripRow.includes("/stats") && !wideStripRow.includes(" …"))
 const railWidthApp = new App({ cols: 140, rows: 30, started: true })
 railWidthApp.setSession({ id: "t1", title: "Test" })
 railWidthApp.setMetrics(metricsSnapshot)
@@ -1134,10 +1138,8 @@ gapAssistant.streaming = false
 const gapRows = gapApp.render().cells.map((r) => r.map((c) => c.ch).join(""))
 const thinkIdx = gapRows.findIndex((r) => r.includes("thinking"))
 const answerIdx = gapRows.findIndex((r) => r.includes("answer"))
-// A blank line separates a collapsed thinking row from the visible answer, and
-// the answer's own `dsh · time` label sits between them.
-ok("thinking row sits right above the answer label", thinkIdx >= 0 && answerIdx === thinkIdx + 3
-  && gapRows[thinkIdx + 1].trim() === "" && gapRows[thinkIdx + 2].includes("dsh"))
+ok("one blank row separates thinking from the answer", thinkIdx >= 0 && answerIdx === thinkIdx + 2
+  && gapRows[thinkIdx + 1].trim() === "")
 
 // ---- theme / activity animation ----
 const SPINNER = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
@@ -1152,49 +1154,20 @@ ok("running tool shows flowing spinner", toolRow && SPINNER.some((ch) => toolRow
 animApp.updateTool("c1", { status: "ok", result: "done" })
 ok("animation stops when tool finishes", !animApp.hasAnimation())
 
-// Running composer border: the flat yellow frame becomes a flowing gold
-// marching-ants frame (several gold tones around the perimeter, advancing
-// over time, with the warning gold still the dominant color).
+// The composer keeps one stable focus stripe; only live activity animates.
 {
-  const borderApp = new App(fakeTerm)
-  borderApp.setSession({ id: "t1", title: "Test" })
-  const idleScreen = borderApp.render()
-  const idleTopRow = idleScreen.cells.find((row) => row.some((cell) => cell.ch === "╭"))
-  const idleDashColors = new Set(idleTopRow.filter((cell) => cell.ch === "─").map((cell) => cell.style?.fg))
-  eq("idle composer border is flat", idleDashColors.size, 1)
-  ok("idle composer border uses theme border color", [...idleDashColors].every((c) => c === THEME.border))
-
-  borderApp.setStatus("running")
-  const realNow = Date.now
-  let fakeNow = 1_000_000
-  Date.now = () => fakeNow
-  const mixHex = (a, b, t) => "#" + [0, 2, 4].map((i) => Math.round(parseInt(a.slice(i, i + 2), 16) + (parseInt(b.slice(i, i + 2), 16) - parseInt(a.slice(i, i + 2), 16)) * t).toString(16).padStart(2, "0")).join("")
-  const golds = new Set([THEME.warning, THEME.warningDim, mixHex(THEME.warning, "ffffff", 0.5)])
-  try {
-    const flowScreen = borderApp.render()
-    const topIdx = flowScreen.cells.findIndex((row) => row.some((cell) => cell.ch === "╭"))
-    const flowTopRow = flowScreen.cells[topIdx]
-    const flowColors = new Set(flowTopRow.filter((cell) => cell.ch === "─").map((cell) => cell.style?.fg))
-    ok("running border flows with several gold tones", flowColors.size >= 2)
-    ok("running border keeps the warning gold", flowColors.has(THEME.warning) && [...flowColors].every((c) => c !== THEME.border))
-    ok("running border stays in the gold family", [...flowColors].every((c) => golds.has(c)))
-    const sideRow = flowScreen.cells[topIdx + 1]
-    ok("running side borders flow", sideRow.some((cell) => cell.ch === "│" && golds.has(cell.style?.fg)))
-    // One 80ms step advances the marching-ants phase, so the tone sequence
-    // along the top edge shifts even though nothing else changed.
-    const before = flowTopRow.filter((c) => c.ch === "─").map((c) => c.style?.fg).join(",")
-    fakeNow += 80
-    const afterScreen = borderApp.render()
-    const afterTopRow = afterScreen.cells[afterScreen.cells.findIndex((row) => row.some((cell) => cell.ch === "╭"))]
-    const after = afterTopRow.filter((c) => c.ch === "─").map((c) => c.style?.fg).join(",")
-    ok("running border advances over time", before !== after)
-  } finally {
-    Date.now = realNow
-  }
-  borderApp.setStatus("idle")
-  const settledScreen = borderApp.render()
-  const settledTopRow = settledScreen.cells.find((row) => row.some((cell) => cell.ch === "╭"))
-  ok("border settles back to static when idle", settledTopRow.filter((cell) => cell.ch === "─").every((cell) => cell.style?.fg === THEME.border))
+  const composerApp = new App(fakeTerm)
+  composerApp.setSession({ id: "t1", title: "Test" })
+  const idle = composerApp.render()
+  const hit = composerApp.hitRegions.find((region) => region.kind === "composer")
+  const stripe = (screen) => screen.cells.slice(hit.y, hit.y + hit.height).map((row) => row[hit.x])
+  ok("composer focus stripe uses the brand accent", stripe(idle).every((cell) => cell.ch === "┃" && cell.style.fg === THEME.primary))
+  composerApp.setStatus("running")
+  const running = composerApp.render()
+  ok("running composer keeps a quiet focus stripe", stripe(running).every((cell) => cell.ch === "┃" && cell.style.fg === THEME.primary))
+  ok("composer has no decorative frame", idle.cells.slice(hit.y, hit.y + hit.height).every((row) => !row.some((cell) => "╭╮╰╯".includes(cell.ch) && cell.ch)))
+  composerApp.setStatus("idle")
+  ok("idle composer stops animation", !composerApp.hasAnimation())
 }
 
 // Streaming thinking header carries the flowing spinner too.
@@ -1290,28 +1263,28 @@ ok("slider hint mentions Tab", sliderRendered.includes("Tab"))
 ok("effort slider current name", sliderRendered.includes("high"))
 ok("effort slider row keeps current value", sliderMidRowText.includes("high"))
 ok("effort slider real range hint", sliderRendered.includes("off") && sliderRendered.includes("max"))
-const midComposerRow = sliderMidScreen.cells.find((row) => row.some((cell) => cell.ch === "╭"))?.map((cell) => cell.ch).join("") ?? ""
+const midComposerRow = sliderMidScreen.cells[sliderApp._layout().transcriptBottom].map((cell) => cell.ch).join("")
 ok("composer label drops effort word", midComposerRow.includes("high") && !midComposerRow.includes("effort"))
 ok("effort slider not animated at mid strength", !sliderApp.hasAnimation())
 sliderApp.setEffortSlider({ levels: [{ id: "off", name: "off" }, { id: "high", name: "high" }, { id: "max", name: "max" }], current: "max" })
-ok("effort slider animates at max", sliderApp.hasAnimation())
+ok("max strength stays still while idle", !sliderApp.hasAnimation())
 const sliderMaxScreen = sliderApp.render()
 const sliderMaxRendered = sliderMaxScreen.cells.map((r) => r.map((c) => c.ch).join("")).join(NL2)
 ok("effort slider max marker is text-safe", sliderMaxRendered.includes("↑") && !sliderMaxRendered.includes(String.fromCodePoint(0x26A1)))
 const sliderMaxRow = sliderMaxScreen.cells.find((row) => row.some((cell) => cell.ch === "█"))
 const sliderGradientColors = new Set(sliderMaxRow?.filter((cell) => cell.ch === "█").map((cell) => cell.style?.fg).filter(Boolean))
-ok("effort slider max uses gradient colors", sliderGradientColors.size > 1)
+ok("effort slider uses a solid accent", sliderGradientColors.size === 1)
 const composerTopRow = sliderMaxScreen.cells.find((row) => {
   const text = row.map((cell) => cell.ch).join("")
-  return text.includes("╭") && text.includes("↑") && text.includes("max")
+  return text.includes("┃") && text.includes("↑") && text.includes("max")
 })
 const composerTopText = composerTopRow?.map((cell) => cell.ch).join("") ?? ""
-ok("effort value is pinned to composer top-right", composerTopText.lastIndexOf("max") > composerTopText.length / 2 && composerTopText.includes("╮"))
+ok("effort value is pinned to composer top-right", composerTopText.lastIndexOf("max") > composerTopText.length / 2 && composerTopText.includes("Tab"))
 const maxStart = composerTopText.lastIndexOf("max")
 const maxTextColors = new Set(composerTopRow?.slice(maxStart, maxStart + 3).map((cell) => cell.style?.fg).filter(Boolean))
-ok("max text uses flowing gradient colors", maxTextColors.size > 1)
+ok("max label uses a stable accent", maxTextColors.size === 1)
 sliderApp.effortSliderVisible = false
-ok("max animation continues after slider closes", sliderApp.hasAnimation())
+ok("closing the slider keeps idle rendering still", !sliderApp.hasAnimation())
 // A one-level Off-only model is not max and must not animate.
 const offOnlyApp = new App(fakeTerm)
 offOnlyApp.setSession({ id: "t1", title: "Test" })

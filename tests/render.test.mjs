@@ -7,7 +7,9 @@
 // and compare an emulated terminal against the frame the app just produced.
 import { Terminal } from "../lib/term.js"
 import { App, THEME } from "../lib/ui.js"
+import { DEFAULT_THEME, THEME_IDS, getTheme } from "../lib/themes.js"
 import { runeWidth } from "../lib/util.js"
+import { setLocale } from "../lib/i18n.js"
 
 let failed = 0
 const ok = (name, cond, extra = "") => {
@@ -480,10 +482,6 @@ for (const [COLS, ROWS] of [[80, 24], [60, 20], [120, 40], [40, 24]]) {
     gridDiff(emulatePaint(writes, COLS, ROWS), screen, COLS, ROWS).length === 0)
 }
 
-console.log("")
-if (failed > 0) { console.log(failed + " render test(s) failed"); process.exit(1) }
-console.log("all render tests passed")
-
 // ---- image blocks -----------------------------------------------------------
 // Image lines (halfblock text rows and graphics-protocol reserved rows) must
 // obey the same frame contract as every other row: exactly cols columns, no
@@ -547,8 +545,7 @@ console.log("all render tests passed")
 
 // ---- tool activity rows ---------------------------------------------------
 // Collapsed, a tool row is one line: a status mark, the action in the tool's
-// accent, and the target it acts on. Expanded, the result hangs under a ⎿
-// gutter and the row offers the way back.
+// accent, and the target it acts on. Expanded results use a padded panel.
 {
   const COLS = 110, ROWS = 30
   const app = new App({ cols: COLS, rows: ROWS, on() {} })
@@ -570,7 +567,7 @@ console.log("all render tests passed")
   ok("tool row hides the result while collapsed", !rows.join("\n").includes("line three"))
   ok("tool row shows the expand hint", readRow.includes("click to expand"))
   ok("tool row keeps the error mark", rowText("git status --short").includes("✗"))
-  ok("tool row marks success", readRow.includes("✓"))
+  ok("read tool uses OpenCode's direction icon", readRow.includes("→"))
   ok("tool row carries no frame", !transcript.join("\n").includes("╭") && !transcript.join("\n").includes("│"))
   // A flat row is clickable across the whole transcript width.
   ok("tool row hit spans the row", (() => {
@@ -580,7 +577,7 @@ console.log("all render tests passed")
   app.toggleTool(readBlock)
   const open = app.render().cells.map((r) => r.map((c) => c.ch).join(""))
   ok("tool row expanded shows the full result", open.join("\n").includes("line three"))
-  ok("tool row expanded uses the ⎿ gutter", open.some((r) => r.includes("⎿")))
+  ok("expanded tool result has a left border", open.some((r) => r.startsWith("  ┃  ") && r.includes("line three")))
   ok("tool row expanded shows the collapse hint", open.find((r) => r.includes("D:/x/README.md")).includes("click to collapse"))
   app.toggleTool(readBlock)
   ok("tool row toggles back", !app.render().cells.map((r) => r.map((c) => c.ch).join("")).join("\n").includes("line three"))
@@ -604,14 +601,57 @@ console.log("all render tests passed")
       }
       return null
     }
-    return colorAt("read") === t.info && colorAt("run") === t.warning && colorAt("edit") === t.secondary
+    return colorAt("read") === t.info && colorAt("$") === t.warning && colorAt("edit") === t.secondary
   })())
 }
 
-// ---- assistant output is flat, not boxed ------------------------------------
-// The answer is a plain column of text under its `dsh · time` label: no bubble
-// frame anywhere in the transcript, and a message that only issued tool calls
-// renders nothing at all while its label moves to the answer that follows.
+// ---- expanding a collapsed block re-renders its body ------------------------
+// A collapsed thinking/note/sysnote body is not built at all, so the first
+// expansion is the first pass through the tint path — and markdown emits
+// segments with a null style (the indent pad of a wrapped list item, the bare
+// prefix pad). Tinting those used to read `null.bg` inside mergeStyle and take
+// the whole process down from inside a mouse handler.
+{
+  const COLS = 80, ROWS = 30
+  const app = new App({ cols: COLS, rows: ROWS, on() {} })
+  app.setSession({ id: "s", title: "T", model: "m" })
+  const wrapped = "- " + "a list item long enough to wrap several times in a narrow pane ".repeat(3)
+  app.addNote(wrapped, "system-reminder")
+  const answer = app.ensureAssistantBlock(Date.now())
+  answer.reasoning = "1. first thought\n2. " + "a second thought long enough to wrap in the pane ".repeat(3)
+  answer.thinkingCollapsed = true
+  answer.text = "done"
+  answer.streaming = false
+  app.render()
+  const note = app.blocks.find((b) => b.kind === "note")
+  const allText = (s) => s.cells.map((r) => r.map((c) => c.ch).join("")).join("\n")
+  let crashed = null
+  let expanded = null
+  try {
+    app.toggleNote(note)
+    app.toggleThinking(answer)
+    expanded = allText(app.render())
+  } catch (err) {
+    crashed = err
+  }
+  ok("expanding a note with null-styled segments does not throw", crashed === null, String(crashed))
+  ok("expanded note renders its wrapped body",
+    !!expanded && expanded.includes("wrap several times") )
+  ok("expanded thinking renders its wrapped body",
+    !!expanded && expanded.includes("second thought long enough"))
+  // The tinted pads must not be painted in the transcript's default colour:
+  // a null style carried through the merge would leave fg unset.
+  const tinted = app.render().cells
+    .flat()
+    .filter((cell) => cell.ch !== " " && cell.style)
+    .some((cell) => cell.style.fg === THEME.reminder)
+  ok("expanded note body carries the reminder accent", tinted)
+  app.toggleNote(note)
+  app.toggleThinking(answer)
+  ok("collapsing back is stable", !!allText(app.render()))
+}
+
+// ---- OpenCode conversation hierarchy ---------------------------------------
 {
   const app = new App({ cols: 110, rows: 30, on() {} })
   app.setSession({ id: "s", title: "T", model: "m", provider: "p" })
@@ -627,7 +667,362 @@ console.log("all render tests passed")
   const { transcriptTop, transcriptH } = app._layout()
   const transcript = rows.slice(transcriptTop, transcriptTop + transcriptH)
   ok("tool-only assistant message renders nothing", !transcript.join("\n").includes("╭"))
-  ok("dsh label transfers to the text answer", rows.some((r) => r.trimStart().startsWith("dsh · ")))
-  ok("assistant answer is flush text", rows.some((r) => r.startsWith("  读取完成。")))
-  ok("user turn opens with the pointer", rows.some((r) => r.startsWith("  ❯ ")))
+  const answerY = rows.findIndex((r) => r.startsWith("     读取完成。"))
+  const footerY = rows.findIndex((r) => r.includes("▣  dsh · m"))
+  ok("assistant metadata follows the answer", answerY >= 0 && footerY === answerY + 2)
+  ok("user message uses the accented left border", rows.some((r) => r.startsWith("  ┃  check")))
+  ok("assistant answer shares the user's text column", answerY >= 0)
+  ok("only the final answer has a metadata footer", transcript.filter((r) => r.includes("▣")).length === 1)
 }
+
+// Code-block styles must survive the transcript renderer and its width clipping.
+for (const cols of [45, 80]) {
+  const app = new App({ cols, rows: 30, on() {} })
+  app.setSession({ id: "s", title: "Code", model: "m" })
+  app.blocks.push({ kind: "assistant", text: '```javascript\nconst answer = "你好";\n```', streaming: false })
+  const screen = app.render()
+  const row = (text) => screen.cells.find((cells) => cells.map((c) => c.ch).join("").includes(text))
+  const header = row("javascript")
+  const code = row("const answer")
+  ok("assistant code header fills the reading column " + cols,
+    !!header && header.slice(5, cols - 2).every((cell) => cell.style?.bg === THEME.codeBg))
+  ok("assistant code body fills the reading column " + cols,
+    !!code && code.slice(5, cols - 2).every((cell) => cell.style?.bg === THEME.codeBg))
+  ok("assistant code preserves both outer gutters " + cols,
+    !!code && [...code.slice(0, 5), ...code.slice(cols - 2)].every((cell) => cell.style?.bg === THEME.background))
+  ok("assistant code retains syntax color " + cols,
+    !!code && code.find((cell) => cell.ch === "c")?.style?.fg === THEME.syntaxKeyword)
+}
+{
+  const app = new App({ cols: 80, rows: 30, on() {} })
+  app.setSession({ id: "s", title: "Tool", model: "m" })
+  app.startTool({ callId: "code", name: "read", args: "{}" })
+  app.updateTool("code", { status: "ok", result: '```python\nprint("hello")\n```' })
+  const block = app.blocks.find((b) => b.kind === "tool")
+  app.toggleTool(block)
+  const screen = app.render()
+  const code = screen.cells.find((row) => row.map((cell) => cell.ch).join("").includes("print"))
+  ok("expanded tool result keeps full code background",
+    !!code && code.slice(5, 77).every((cell) => cell.style?.bg === THEME.codeBg))
+  ok("expanded tool result keeps syntax colors",
+    !!code && code.find((cell) => cell.ch === "p")?.style?.fg === THEME.syntaxType)
+}
+
+for (const cols of [40, 80, 140]) {
+  const app = new App({ cols, rows: 45, on() {} })
+  app.setSession({ id: "s", title: "Prompts", model: "model-a" })
+  app.addUser("## **literal** `code`\n\n中文宽字符与 emoji 🌊 ".repeat(3).trim(), { time: 1_700_000_000_000 })
+  const screen = app.render()
+  const edge = app._layout().borderX
+  const rows = screen.cells.map((row) => row.slice(0, edge).map((cell) => cell.ch).join(""))
+  const prompt = rows.findIndex((row) => row.includes("## **literal** `code`"))
+  ok(`user markdown remains literal at ${cols} columns`, prompt >= 0)
+  ok(`user panel has top padding at ${cols} columns`,
+    prompt > 0 && rows[prompt - 1].trim() === "┃")
+  const cellRow = screen.cells[prompt] ?? []
+  ok(`user panel keeps a blue border and neutral fill at ${cols} columns`,
+    cellRow[2]?.ch === "┃" && cellRow[2]?.style?.fg === THEME.primary
+      && cellRow.slice(3, edge - 2).every((cell) => cell.style?.bg === THEME.backgroundPanel))
+  ok(`user panel leaves both outside gutters clear at ${cols} columns`,
+    [...cellRow.slice(0, 2), ...cellRow.slice(edge - 2, edge)].every((cell) => cell.style?.bg === THEME.background))
+}
+
+// Footer ownership changes as the response crosses tools; cached rows must
+// follow that change and historical models must survive a model switch.
+for (const cols of [32, 80, 140]) {
+  const app = new App({ cols, rows: 45, on() {} })
+  app.setSession({ id: "s", model: "model-alpha", provider: "provider-a" })
+  app.addUser("first question")
+  app.setAssistantText("first answer")
+  app.addModelChange(
+    { model: "model-alpha", provider: "provider-a" },
+    { model: "model-beta", provider: "provider-b" },
+  )
+  app.addUser("second question")
+  const screen = app.render()
+  const rows = screen.cells.map((row) => row.map((cell) => cell.ch).join(""))
+  const text = rows.join("\n")
+  const notice = app.blocks.find((block) => block.kind === "model-change")
+  const lines = app._ensureBlockLines(notice, app._layout().borderX)
+  const rendered = lines.map((line) => line.segs.map((seg) => seg.text).join("")).join("")
+  ok(`model switch preserves both model and provider at ${cols} columns`,
+    ["model-alpha", "provider-a", "model-beta", "provider-b"].every((name) => rendered.includes(name)))
+  ok(`model switch stays between conversation turns at ${cols} columns`,
+    text.indexOf("first answer") < text.indexOf("Model changed") && text.indexOf("Model changed") < text.indexOf("second question"))
+  ok(`model switch respects the transcript width at ${cols} columns`,
+    lines.every((line) => line.segs.reduce((width, seg) => width + Array.from(seg.text).reduce((sum, rune) => sum + runeWidth(rune), 0), 0)
+      <= app._layout().borderX - (line.inset ?? 0) - (line.rightInset ?? 0)))
+  if (cols === 140) ok("model switch has understated separators", text.split("\n").some((row) => row.includes("─") && row.includes("◇") && row.includes("Model changed")))
+}
+
+{
+  const app = new App({ cols: 100, rows: 40, on() {} })
+  app.setSession({ id: "s", model: "one", provider: "p" })
+  app.addModelChange({ model: "one", provider: "p" }, { model: "one", provider: "p" })
+  app.addModelChange({ model: "", provider: "" }, { model: "one", provider: "p" })
+  ok("initial or identical routes do not create notices", app.blocks.length === 0)
+  app.addUser("streaming")
+  app.setStatus("running")
+  app.streamChunk({ type: "text-delta", text: "first " })
+  app.addModelChange({ model: "one", provider: "p" }, { model: "two", provider: "p" }, { defer: true })
+  app.streamChunk({ type: "text-delta", text: "second" })
+  ok("changing models during a response leaves streaming in one assistant block",
+    app.blocks.filter((block) => block.kind === "assistant").length === 1
+      && app.blocks.find((block) => block.kind === "assistant").text === "first second"
+      && !app.blocks.some((block) => block.kind === "model-change"))
+  app.setStatus("idle")
+  ok("the deferred switch appears after the completed response",
+    app.blocks.at(-2)?.kind === "assistant" && app.blocks.at(-1)?.kind === "model-change")
+}
+
+{
+  const app = new App({ cols: 100, rows: 45, on() {} })
+  const text = () => app.render().cells.map((row) => row.map((cell) => cell.ch).join("")).join("\n")
+  app.setSession({ id: "s", title: "Metadata", model: "model-a" })
+  app.addUser("first prompt", { time: 1000 })
+  app.setAssistantText("before tools", 1500)
+  ok("a completed response has a duration footer", text().includes("▣  dsh · model-a · 500ms"))
+  app.startTool({ callId: "read", name: "read", args: { file_path: "lib/ui.js" } })
+  app.updateTool("read", { status: "ok", result: "read result" })
+  ok("starting a tool removes the cached intermediate footer", !text().includes("▣"))
+  app.startTool({ callId: "glob", name: "glob", args: { pattern: "tests/*" } })
+  app.updateTool("glob", { status: "ok", result: "test list" })
+  const rows = text().split("\n")
+  const readY = rows.findIndex((row) => row.includes("lib/ui.js"))
+  const globY = rows.findIndex((row) => row.includes("tests/*"))
+  ok("consecutive compact tools occupy consecutive rows", readY >= 0 && globY === readY + 1)
+  app.setAssistantText("after tools", 3000)
+  ok("the final response footer includes the whole turn", text().includes("▣  dsh · model-a · 2.0s"))
+  app.setSession({ model: "model-b" })
+  app.addUser("second prompt", { time: 4000 })
+  app.setAssistantText("second answer", 5000)
+  const painted = text()
+  ok("changing models preserves each response's model and duration",
+    painted.includes("▣  dsh · model-a · 2.0s") && painted.includes("▣  dsh · model-b · 1.0s"))
+  ok("each completed turn has exactly one footer", painted.split("▣").length === 3)
+}
+
+{
+  const cols = 70, rows = 42
+  const { term, writes } = paintCapture(cols, rows)
+  const app = new App({ cols, rows, on() {} })
+  app.setSession({ id: "s", title: "Shell" })
+  const command = "npm run check -- --a-long-option-that-needs-to-wrap-across-the-command-panel"
+  app.startTool({ callId: "shell", name: "pwsh", args: { command } })
+  app.updateTool("shell", { status: "ok", result: Array.from({ length: 15 }, (_, i) => `output ${i + 1}`).join("\n") })
+  const block = app.blocks.find((b) => b.kind === "tool")
+  let screen = app.render()
+  term.paint(screen)
+  let painted = screen.cells.map((row) => row.map((cell) => cell.ch).join("")).join("\n")
+  ok("shell preview shows ten lines and an overflow count",
+    painted.includes("output 10") && !painted.includes("output 11") && painted.includes("5 more lines"))
+  ok("shell command wraps without losing its tail", painted.includes("command-panel"))
+  app.toggleTool(block)
+  screen = app.render()
+  term.paint(screen)
+  painted = screen.cells.map((row) => row.map((cell) => cell.ch).join("")).join("\n")
+  ok("expanding shell output reveals the remaining lines", painted.includes("output 15") && painted.includes("click to collapse"))
+  app.toggleTool(block)
+  screen = app.render()
+  term.paint(screen)
+  ok("collapsing a tool panel leaves no terminal residue",
+    gridDiff(emulatePaint(writes, cols, rows), screen, cols, rows).length === 0)
+}
+
+{
+  const app = new App({ cols: 70, rows: 30, on() {} })
+  app.setSession({ id: "s", title: "Streaming", model: "model-a" })
+  app.setStatus("running")
+  app.streamChunk({ type: "reasoning-delta", text: "considering the layout" })
+  const text = () => app.render().cells.map((row) => row.map((cell) => cell.ch).join("")).join("\n")
+  ok("reasoning-only streaming avoids an empty answer cursor", !text().includes("▍") && text().includes("thinking"))
+  app.setAssistantText("finished answer", Date.now())
+  app.setStatus("idle")
+  ok("stream completion replaces activity with the answer and footer",
+    text().includes("finished answer") && text().includes("▣  dsh · model-a") && !text().includes("▍"))
+}
+
+for (const cols of [26, 40, 60, 100, 150]) {
+  const app = new App({ cols, rows: 30, on() {} })
+  app.setSession({ id: "s", title: "Image sizing" })
+  app.addUser("image")
+  app.render()
+  const edge = app._layout().borderX
+  ok(`image budget stays inside the padded panel at ${cols} columns`,
+    app.imageRenderOptions().maxCellsW <= edge - 9)
+}
+
+{
+  const app = new App({ cols: 80, rows: 30, on() {} })
+  app.setSession({ id: "s", title: "Literal output" })
+  app.addUser("**literal**\ttext\x1b[31m")
+  app.startTool({ callId: "ansi", name: "shell", args: { command: "echo test" } })
+  app.updateTool("ansi", { status: "ok", result: "\x1b[32mPASS\x1b[0m\n\t$ **literal output**" })
+  const text = app.render().cells.map((row) => row.map((cell) => cell.ch).join("")).join("\n")
+  ok("literal user and shell text keep markdown and expand tabs",
+    text.includes("**literal**    text") && text.includes("$ **literal output**"))
+  ok("shell ANSI formatting cannot escape the cell buffer", !text.includes("\x1b") && !text.includes("[32m"))
+}
+
+// The model footer needs breathing room under both the placeholder and a draft.
+for (const [cols, rows] of [[40, 16], [100, 30]]) {
+  for (const session of [false, true]) {
+    for (const draft of ["", "First line\nSecond line"]) {
+      const app = new App({ cols, rows, on() {} })
+      if (session) app.setSession({ id: "spacing", title: "Spacing", model: "test-model", provider: "test-provider" })
+      else app.setWelcome({ model: "test-model", provider: "test-provider" })
+      app.inputText = draft
+      app.inputCursor = draft.length
+      const screen = app.render()
+      const composer = app.hitRegions.find((region) => region.kind === "composer")
+      const lines = screen.cells.map((row) => row.map((cell) => cell.ch).join(""))
+      const footerY = lines.findIndex((line, y) => y >= composer.y && y < composer.y + composer.height && line.includes("test-provider · test-model"))
+      const lastInputY = draft ? lines.findIndex((line) => line.includes("Second line")) : screen.cursorY
+      const gap = screen.cells[lastInputY + 1].slice(composer.x + 1, composer.x + composer.width)
+      const label = `${cols}x${rows} ${session ? "session" : "home"} ${draft ? "multiline" : "placeholder"}`
+      ok(`${label}: a blank panel row separates input from model`,
+        footerY === lastInputY + 2 && gap.every((cell) => cell.ch === " " && cell.style.bg === THEME.backgroundPanel))
+      ok(`${label}: composer footer remains above the status line`,
+        composer.y + composer.height <= rows - 1)
+      ok(`${label}: clicking the input still positions the caret`,
+        app.placeInputCursor(composer.x + 2, screen.cursorY) && app.inputCursor <= draft.length)
+    }
+  }
+}
+
+// Home, command choices and settings must keep their own space after a resize.
+for (const locale of ["en", "zh-CN", "de", "ru"]) {
+  setLocale(locale)
+  for (const [cols, rows] of [[40, 16], [44, 24], [80, 24], [100, 30], [150, 40]]) {
+    const app = new App({ cols, rows, on() {} })
+    app.setWelcome({ model: "deepseek-v4-flash", workingDirectory: "D:/项目/终端界面", gitBranch: "main" })
+    const home = app.render()
+    const layout = app._layout()
+    const allText = (screen) => screen.cells.map((row) => row.map((cell) => cell.ch).join("")).join("\n")
+    ok(`${locale} ${cols}x${rows}: home keeps a centered input without side panels`,
+      layout.railW === 0 && layout.sidebarW === 0 && layout.composerW <= 76 &&
+      Math.abs(layout.composerX - (cols - layout.composerX - layout.composerW)) <= 1)
+    ok(`${locale} ${cols}x${rows}: settings and thinking stay discoverable`,
+      allText(home).includes("Ctrl+P") && allText(home).includes("Tab"))
+    app.inputText = "/"
+    app.inputCursor = 1
+    app.moveCommandSelection(-1)
+    app.render()
+    const commandRows = app.hitRegions.filter((region) => region.kind === "command")
+    ok(`${locale} ${cols}x${rows}: last command can scroll into a bounded popup`,
+      commandRows.length <= 6 && commandRows.some((region) => region.commandIndex === app.commandSelection) &&
+      commandRows.every((region) => region.y > 0 && region.y < rows - 4))
+    const composer = app.hitRegions.find((region) => region.kind === "composer")
+    ok(`${locale} ${cols}x${rows}: popup leaves the full composer visible`,
+      composer && composer.y + composer.height <= rows - 1)
+
+    app.inputText = "中文测试 hello ".repeat(12)
+    app.inputCursor = app.inputText.length
+    const multiline = app.render()
+    ok(`${locale} ${cols}x${rows}: CJK caret follows the visible input`,
+      multiline.cursorX >= layout.composerX + 2 && multiline.cursorX < layout.composerX + layout.composerW - 1 &&
+      multiline.cursorY > 0 && multiline.cursorY < rows - 1)
+
+    app.openSettings(Array.from({ length: 12 }, (_, i) => ({ label: "选项 option " + i, value: "中文 value " + i })), {
+      title: "设置 Settings", menu: [{ label: "常规 General" }, { label: "模型 Model" }, { label: "MCP" }],
+    })
+    app.setSettingsSelection(11)
+    const settings = app.render()
+    const settingsText = allText(settings)
+    ok(`${locale} ${cols}x${rows}: selected setting and its value scroll together`,
+      settingsText.includes("option 11") && settingsText.includes("value 11"))
+    ok(`${locale} ${cols}x${rows}: all setting rows and tabs are clickable inside the terminal`,
+      app.hitRegions.filter((region) => region.kind.startsWith("settings-")).every((region) =>
+        region.x >= 0 && region.y >= 0 && region.x + region.width <= cols && region.y + region.height <= rows))
+    const restoredHeader = home.cells[0].findIndex((cell) => cell.ch === "D")
+    ok(`${locale} ${cols}x${rows}: dialog dims the background`,
+      settings.cells[0][restoredHeader].style.fg !== home.cells[0][restoredHeader].style.fg)
+    app.overlay = null
+    ok(`${locale} ${cols}x${rows}: closing dialog restores the background`,
+      app.render().cells[0][restoredHeader].style.fg === home.cells[0][restoredHeader].style.fg)
+
+    app.overlay = "help"
+    const help = app.render()
+    const bottomBorder = help.cells.some((row) => row.some((cell) => cell.ch === "╰"))
+    ok(`${locale} ${cols}x${rows}: help fits and keeps its exit hint`,
+      bottomBorder && allText(help).includes("Esc"))
+  }
+}
+setLocale("en")
+{
+  const app = new App({ cols: 150, rows: 40, on() {} })
+  app.sidebarVisible = true
+  app.setSession({ id: "s", title: "Conversation" })
+  ok("wide session sidebar has readable titles", app._layout().sidebarW >= 22)
+  app.terminal.cols = 100
+  ok("narrow session keeps transcript space before adding a sidebar", app._layout().sidebarW === 0)
+}
+
+// Theme changes repaint cached transcript rows, including a streaming answer.
+{
+  setLocale("en")
+  const app = new App({ cols: 100, rows: 30, on() {} })
+  const other = new App({ cols: 100, rows: 30, on() {} })
+  app.setSession({ id: "s", title: "Theme session" })
+  app.addUser("A user message")
+  app.blocks.push({ kind: "assistant", text: "# Answer\n\n`code`", streaming: true, rev: 1 })
+  ok("DeepSeek Standard is the default theme", app.themeId === DEFAULT_THEME)
+  for (const id of THEME_IDS) {
+    app.setTheme(id)
+    const screen = app.render()
+    const cells = screen.cells.flat()
+    const text = screen.cells.map((row) => row.map((cell) => cell.ch).join("")).join("\n")
+    ok(id + " paints its background and conversation", screen.cells[1][0].style.bg === getTheme(id).background &&
+      text.includes("A user message") && text.includes("Answer"))
+    ok(id + " paints the user panel and markdown with its palette",
+      cells.some((cell) => cell.style.bg === getTheme(id).backgroundPanel) &&
+      cells.some((cell) => cell.style.fg === getTheme(id).markdownHeading))
+  }
+  ok("theme changes stay local to each app instance", other.themeId === DEFAULT_THEME)
+  app.setTheme("unknown-theme")
+  ok("an unknown theme falls back to DeepSeek Standard", app.themeId === DEFAULT_THEME)
+}
+
+// Check the text colours against the surfaces used for conversation, input,
+// overlays and selection, so a palette change cannot quietly reduce contrast.
+{
+  const luminance = (hex) => {
+    const channels = hex.match(/../g).map((part) => parseInt(part, 16) / 255)
+    return channels.map((value) => value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4)
+      .reduce((sum, value, index) => sum + value * [0.2126, 0.7152, 0.0722][index], 0)
+  }
+  const contrast = (fg, bg) => {
+    const values = [luminance(fg), luminance(bg)]
+    return (Math.max(...values) + 0.05) / (Math.min(...values) + 0.05)
+  }
+  for (const id of ["dracula", "nord"]) {
+    const theme = getTheme(id)
+    for (const foreground of ["text", "textMuted", "primary"]) {
+      for (const background of ["background", "backgroundPanel", "backgroundElement", "codeBg", "selection"]) {
+        const ratio = contrast(theme[foreground], theme[background])
+        ok(`${id} ${foreground} on ${background} has readable contrast`, ratio >= 4.5, ratio.toFixed(2))
+      }
+    }
+  }
+}
+
+// ---- the composer advertises Ctrl+Enter for newline -------------------------
+// The hint is the only place most readers learn the binding, so it is checked
+// on the painted frame rather than in the catalog alone: the composer footer
+// and the help overlay must name the same key.
+{
+  setLocale("en")
+  const app = new App({ cols: 100, rows: 30, on() {} })
+  const text = (screen) => screen.cells.map((r) => r.map((c) => c.ch).join("")).join("\n")
+  const home = text(app.render())
+  ok("composer hint advertises Ctrl+Enter newline", home.includes("Ctrl+Enter newline"))
+  ok("composer hint drops Ctrl+J", !home.includes("Ctrl+J"))
+  app.overlay = "help"
+  const help = text(app.render())
+  ok("help overlay agrees with the composer hint", help.includes("Ctrl+Enter") && !help.includes("Ctrl+J"))
+  app.overlay = null
+}
+
+console.log("")
+if (failed > 0) { console.log(failed + " render test(s) failed"); process.exit(1) }
+console.log("all render tests passed")

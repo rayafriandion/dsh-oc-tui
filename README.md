@@ -47,7 +47,7 @@ Published on **npm** as [`dsh-oc-tui`](https://www.npmjs.com/package/dsh-oc-tui)
 | **Real image rendering** | Images in the transcript render as real pixels — kitty graphics, iTerm2 inline images, or sixel, probed from the terminal itself (works over SSH), with a truecolor half-block preview on terminals that support no protocol. Pasted images, stored attachments, and markdown images all flow through one pipeline. See [Graphics rendering](#graphics-rendering). |
 | **Mermaid diagrams** | A ` ```mermaid ` fence renders as a real diagram through a provider chain — local `mmdc` if installed, otherwise mermaid.ink (gated by a setting) — into the same image pipeline; offline it degrades to highlighted source. |
 | **Full markdown** | Tables in rounded boxes, nested and task lists, syntax-highlighted code (190+ languages), and clickable OSC 8 hyperlinks, rendered from markdown-it's CommonMark + GFM token stream. |
-| **Flat transcript** | No frames around the conversation: your turns open with a brand-blue `❯` pointer and hang under it, the assistant answers as a full-width column of text under its `dsh · time` label, and every block measures itself in text — so wide runes never push a border out of alignment. The header is one row: brand and session title on the left, the workspace path with its git branch on the right; the model is not repeated there (the status row / rail names it). |
+| **OpenCode-style conversation** | User messages preserve literal text inside a padded panel with a blue left border. Assistant markdown shares the same reading column, with collapsible thinking above and a model / duration footer below. Consecutive tool calls stay compact; commands show a ten-line output preview, and clicking a tool expands its result. Both sides retain clear gutters, including around code and images. |
 | **Tool activity** | One row per tool: a status mark, the action in the tool's own accent (`read` cyan, `run` gold, `edit` light blue, `todo` mint), and its target. Click the row to expand the full result under a `⎿` gutter. |
 | **Interactive questions** | The model can pause and ask you — option lists, multi-select, free text, and a scrollable plan review — all inline in the terminal. See [Interactive prompts](#interactive-prompts). |
 | **Inline approvals** | `approval/request` prompts are answered with `y` / `n` without leaving the UI; the box shows the action and the reason, with room for origin, risk and details when a `@dsh-std` request carries them. |
@@ -209,6 +209,10 @@ It prefers the `dsh` on `PATH` and falls back to `npx --yes @deepseek-ai/dsh`. I
 
 ## Usage
 
+The home screen follows OpenCode's centered prompt layout: a one-line DeepSeek gradient mark, a restrained input panel, and nearby settings, thinking and branch shortcuts. Conversations use a bottom composer, subtle user-message backgrounds and a separate wide-screen status rail. The blue input accent stays still; only active work animates. Settings dim the background and adapt to narrow terminals with horizontal categories and stacked label/value rows. This layout uses the existing renderer and dependencies.
+
+Choose a color theme under `Ctrl+P → Main → Theme`. DeepSeek Standard is the default; GitHub Dark, Dracula, VS Code Dark+ and Nord are also available. Changes apply immediately and the choice is saved.
+
 ### Keybindings
 
 | Key | Action |
@@ -217,9 +221,10 @@ It prefers the `dsh` on `PATH` and falls back to `npx --yes @deepseek-ai/dsh`. I
 | `Ctrl+Enter` / `Shift+Enter` / `Alt+Enter` | Insert a newline. |
 | `Ctrl+C` | Clear a non-empty prompt, cancel the running turn, or press twice while idle to exit. |
 | `Ctrl+P` | Open Settings. |
+| `Ctrl+S` | Save a framed PNG of the current TUI view. |
 | `Ctrl+E` | Toggle the thinking-intensity slider below the composer. |
 | `Ctrl+G` | Empty page: open the git branch switcher. Inside a session: a note that it is empty-page only. |
-| `Tab` | Session page: cycle the thinking intensity. Settings page: switch the left menu. |
+| `Tab` | Complete a slash suggestion; otherwise cycle the thinking intensity. In Settings, switch categories. |
 | `Ctrl+N` | New session. |
 | `Ctrl+D` | In Settings → Manage sessions: delete the focused session (press twice to confirm). |
 | `Ctrl+L` | Clear the transcript view. |
@@ -233,9 +238,13 @@ It prefers the `dsh` on `PATH` and falls back to `npx --yes @deepseek-ai/dsh`. I
 
 **Mouse.** The wheel scrolls the transcript — or the status rail when the pointer rests over it, or the Settings window while it is open. Hold the left button and drag across the transcript to select text, then press the right button to copy the selection.
 
+**Screenshots.** `Ctrl+S` saves the visible TUI, including terminal images, as a PNG with a window-style frame. The result appears in the top-right corner. The default destination is the user's Pictures folder; change it under `Ctrl+P → Main → Screenshot folder`. Clear the field to restore the default. The screenshot contains the visible screen, not the entire scrollback.
+
 ### Slash commands
 
 Built in: `/help` `/settings` `/new` `/resume <id>` `/model <id>` `/provider <route>` `/rewind` `/branch` `/stats` `/clear` `/cancel` `/quit` (`/exit` also works).
+
+Typing `/` opens a bounded suggestion list. Use `↑`/`↓` to select, `Tab` or a click to complete, and `Esc` to dismiss it while keeping the draft. `Enter` completes an unfinished command; an exact command executes immediately.
 
 **Rewind.** `Esc Esc` (or `/rewind`) lists the prompts of the live session. Restoring the **conversation** forks a new session from the events before the chosen prompt — the parent session is left untouched on disk, exactly as the harness's own `session/fork` does — and the picker lands on the most recent prompt, so `Enter` twice rewinds the last turn. `/rewind <n|last> [conversation|code|both]` runs it without the picker. The fork starts with an **empty inbox**: a cut before a turn also cuts the inbox claim that turn performed, so anything the parent had queued — including the prompt you rewound away from — is not delivered again; it stays in the parent's log, and the result line says `dropped N inherited pending input` when there was any. Restoring **files** is best-effort and fenced: it needs a git worktree (anywhere else the rewind reports `files not restored (not a git worktree)` and changes nothing), it rewrites tracked files from `HEAD` without touching the index, and it removes an untracked file only when the transcript's first recorded write to that path is at or after the rewind point. Everything it overwrites or deletes is copied to `$DSH_HOME/rewind-backups/<sessionId>/<timestamp>/` first, and the result line names that directory. Because the log stores no file contents, a tracked file returns to its last commit, not to its exact state at the rewind point.
 
@@ -271,7 +280,7 @@ Deferring is deliberate, not a cancel: with no other answerer the tool reports `
 
 ### Thinking intensity
 
-The effective level sits on the composer's top-right border as the bare level name, diagonally opposite the `provider · model` label.
+The effective level and its `Tab` hint sit at the composer's top right. Click the label to open the slider. The display stays static at every level, including `max`.
 
 - `Tab` on the session page cycles the levels of the **current model** (wrapping strongest → weakest); `Shift+Tab` steps backwards.
 - `Ctrl+E` opens a slider below the composer: `Tab` or `←`/`→` adjust and persist, `Esc` or `Ctrl+E` close it.
@@ -281,16 +290,16 @@ The choice is applied to the session's requests through the `agent/request` wate
 
 ### Session stats and the context meter
 
-The row above the composer is the **session stats strip**, the TUI's counterpart of the web chat's stats line: the same figures in the same order, separated by `│`:
+The row above the composer is the **session stats strip**, the TUI's counterpart of the web chat's stats line: the same figures in the same order, separated by spaces:
 
 ```
-▤ 1 turn · 2 steps│LLM 1.3s · tools 1.2s│TTFT avg 400ms · 20.0 tok/s│cache 55%│in 110 · out 30
+▤ 1 turn · 2 steps LLM 1.3s · tools 1.2s TTFT avg 400ms · 20.0 tok/s cache 55% in 110 · out 30
 ```
 
 - `turns` / `steps` count **closed steps** (`step/end`), so failed, cancelled, and max-tokens steps count too. `LLM` is `step/start` → assembled reply; `tools` pairs `tool/call` → `tool/result`.
 - `TTFT avg` is the per-step average time to first token; `tok/s` is decode throughput (first token → assembled reply over the reported output tokens).
 - `cache` is the prompt-side cache-hit share (cache reads over all billed input); `in` / `out` are the session's billed input and output tokens.
-- A narrow terminal drops trailing groups **whole** and marks the elision with `│…` rather than cutting a figure in half; the window always carries the complete set.
+- A narrow terminal drops trailing groups **whole** and marks the elision with `…` rather than cutting a figure in half; the window always carries the complete set.
 - A session with no closed step and no billed tokens hides the strip entirely and gives the row back to the transcript.
 
 The whole strip is a click target. Clicking it — or the context meter at the right end of the status row (`ctx ▓▓░░ 32K/128K 25%`), or typing `/stats` — opens the **session stats window**; click again, click elsewhere, or press `Esc` to close. The window breaks the same line into labelled rows (`usage` / `duration` / `speed` / `tokens` / `cache`) and adds the context-occupancy reading with its heuristic composition — system prompt, tools, and messages — matching the Web UI's ContextMeter dialog.
@@ -299,7 +308,7 @@ Figures come from the same sources as the Web UI, projection-first with the plug
 
 ### The status rail
 
-From **140 columns** a right-hand rail takes over the status figures, OpenCode-style: the session title pins to the top, scrollable sections fill the middle — `MODEL` (model, provider), `THINKING` (current level and its real range), `CONTEXT` (occupancy bar, tokens, billing, composition), `SESSION` (the stats strip's figures, expanded), `GOAL`, `SUBAGENTS` — and the running builds (`dsh x.y.z · tui a.b.c`) pin to the bottom. Sections with no data drop out whole.
+In conversations from **140 columns**, a right-hand rail takes over the status figures, OpenCode-style: the session title pins to the top, scrollable sections fill the middle — `MODEL` (model, provider), `THINKING` (current level and its real range), `CONTEXT` (occupancy bar, tokens, billing, composition), `SESSION` (counts, durations and speed), `GOAL`, `SUBAGENTS` — and the running builds (`dsh x.y.z · tui a.b.c`) pin to the bottom. Sections with no data drop out whole. The home screen keeps its centered layout at every width.
 
 `GOAL` and `SUBAGENTS` read the harness's native surfaces: the `goal` projection registered by `dsh-goal` (objective, phase, rounds, blocker reason), and `ctx.subagents.listDescendants()` for the delegation tree rooted at the open session, refreshed on the scoped `subagent/start` / `subagent/end` edges. Both services are optional — a composition without them leaves those sections empty.
 
@@ -307,7 +316,7 @@ When the sections outgrow the window a scrollbar appears in the rail's right edg
 
 ### Settings
 
-`Ctrl+P` opens a settings menu over the same host settings namespaces as the Web UI, persisted through `ctx.settings` to `$DSH_HOME/settings.yaml`. A left menu splits it into three tabs (`Tab` or click to switch):
+`Ctrl+P` opens a settings menu over the same host settings namespaces as the Web UI, persisted through `ctx.settings`. Categories appear on the left in wide dialogs and across the top in narrow ones (`Tab` or click to switch):
 
 - **Main** — General (busy-Enter behaviour, permission preset), Sessions (new session, manage sessions), System (provider API hints, update-manager shortcut, settings file path).
 - **Model** — the default provider/model/reasoning choice, then one group per configured provider holding its API key, URL and model list, and finally **Add provider**. Pressing `Enter` on **Models** fetches the provider's advertised catalog (`ctx.llm.discoverModels`) and opens a checkbox window; pressing `Enter` on a listed model makes it the default route. Inside that window `e` edits the highlighted entry — id, context window, output tokens, input modalities — and `Del` removes it from the provider, while **Refresh catalog** asks the endpoint again and **Add model by id** covers a model it does not advertise. The first row is a whole-selection toggle (`selected/total`); a failed fetch prints the endpoint's own refusal — `answered 401; check the API key`, `could not reach …` — instead of an empty list, and a hand-declared route's first successful fetch arrives with every model already selected. **Add provider** offers the same two paths the Web UI's add card does: adopt a route the installed adapter already ships, or declare a custom endpoint (route id, wire protocol, endpoint, and at least one model). Its top row filters the catalog as you type; the declaring path can interrogate its endpoint with a key that has not been stored yet, so adding a gateway is one pass instead of save-then-return. **Remove provider** deletes the profile and its managed credential.
@@ -551,7 +560,7 @@ lib/caps.js          terminal capability probing (DA1, XTVERSION, kitty graphics
 lib/image.js         image pipeline (decode/scale + halfblock, sixel, kitty, iTerm2 encoders)
 lib/mermaid.js       mermaid provider chain (mmdc → mermaid.ink → highlighted fallback), tried only for grammars the built-in engine cannot draw
 lib/mermaid-ascii.js native terminal art for mermaid fences (box-drawing layout, tried before the image path)
-lib/ui.js            responsive view model + renderer (flat transcript, tool rows, question modal)
+lib/ui.js            responsive view model + renderer (conversation panels, tool rows, question modal)
 lib/splash-opencode.js title-screen art (OpenCode-style layout, DeepSeek gradient mark)
 lib/metrics.js       whole-session stats + token usage fold (web stats strip / tokenUsage port)
 lib/rewind.js        rewind picker: conversation fork from the event log plus fenced file restore

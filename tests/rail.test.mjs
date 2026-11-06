@@ -59,8 +59,13 @@ function wideApp(cols = 150, rows = 40, { titleScreen = false } = {}) {
   ok("narrow window: no MODEL section anywhere", findRow(screen, "MODEL") === -1)
   // The threshold clears the 120-column default many terminals open at: one
   // column below it there is no rail, on it there is.
-  ok("boundary: 139 columns keep the single-column layout", newApp(139, 30)._layout().railW === 0)
-  ok("boundary: 140 columns open the rail", newApp(140, 30)._layout().railW === 34)
+  const boundary = (cols) => {
+    const app = newApp(cols, 30)
+    app.setSession({ id: "s", title: "T" })
+    return app._layout()
+  }
+  ok("boundary: 139 columns keep the single-column layout", boundary(139).railW === 0)
+  ok("boundary: 140 columns open the rail", boundary(140).railW === 34)
 }
 
 // ---- wide window: rail geometry and sections --------------------------------
@@ -84,6 +89,8 @@ function wideApp(cols = 150, rows = 40, { titleScreen = false } = {}) {
   ok("wide window: context breakdown line", rail("system 4K · tools 8K") >= 0 && rail("20K") >= 0)
   ok("wide window: billed tokens line", rail("in 12K · out 3K") >= 0)
   ok("wide window: cache hit line", rail("cache 82% hit") >= 0)
+  ok("wide window: billing stays in one section",
+    screen.cells.filter((row) => row.slice(borderX + 1).map((cell) => cell.ch).join("").includes("in 12K · out 3K")).length === 1)
   ok("wide window: SESSION section shows counts", rail("SESSION") >= 0 && rail("2 turns · 3 steps") >= 0)
   ok("wide window: header names the workspace", rowText(screen, 0, 0, COLS).includes("DeepSeekHarnessPlugins"))
   ok("wide window: rail footer does not repeat the workspace", rail("DeepSeekHarnessPlugins") === -1)
@@ -96,15 +103,15 @@ function wideApp(cols = 150, rows = 40, { titleScreen = false } = {}) {
   ok("wide window: composer label drops the model", !rowText(screen, layout.transcriptBottom).includes("deepseek · deepseek-v4-flash"))
 }
 
-// ---- title screen: rail exists without a session ----------------------------
+// ---- title screen: a centered composer owns the whole canvas ----------------
 {
   const COLS = 150, ROWS = 40
   const app = wideApp(COLS, ROWS, { titleScreen: true })
   app.setContextMeter(null)
   const screen = app.render()
   const borderX = COLS - 35
-  ok("title screen: MODEL section present", findRow(screen, "MODEL", borderX + 1, COLS) >= 0)
-  ok("title screen: context without usage says so", findRow(screen, "shown once usage is reported", borderX + 1, COLS) >= 0)
+  ok("title screen: no empty status rail", app._layout().railW === 0 && findRow(screen, "MODEL") === -1)
+  ok("title screen: model lives in the composer", findRow(screen, "deepseek-v4-flash") >= 0)
   ok("title screen: splash brand stays inside the main area", (() => {
     const brandY = findRow(screen, "DeepSeek Harness".slice(0, 8), 0, borderX)
     if (brandY < 0) return false

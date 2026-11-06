@@ -23,8 +23,10 @@ import { join } from "node:path"
 import { Context, Service } from "@deepseek-ai/cordis"
 import { Terminal } from "../lib/term.js"
 import { LOCALES } from "../lib/i18n.js"
+import { getTheme } from "../lib/themes.js"
 
 const smokeHome = mkdtempSync(join(tmpdir(), "dsh-oc-tui-locale-forms-home-"))
+const mixed = process.env.DSH_TEST_MIXED === "1"
 process.env.DSH_HOME = smokeHome
 process.on("exit", () => {
   try { rmSync(smokeHome, { recursive: true, force: true }) } catch { /* best effort */ }
@@ -58,8 +60,10 @@ Object.defineProperty(process, "stdin", { value: stdin, configurable: true })
 Object.defineProperty(process, "stdout", { value: new FakeOut(120, 34), configurable: true })
 
 const frames = []
+let lastScreen
 const realPaint = Terminal.prototype.paint
 Terminal.prototype.paint = function (screen) {
+  lastScreen = screen
   const rows = []
   for (let y = 0; y < screen.rows; y++) {
     let line = ""
@@ -107,6 +111,17 @@ class FormsSettings extends Service {
     this.revision = 0
     this.writes = []
     this.describes = 0
+    if (mixed) {
+      this.ownerContext = { configEditor: {} }
+      this.legacy = new Map([
+        ["tui-theme", { preference: "dracula" }],
+        ["tui-locale", { preference: "ja" }],
+        ["tui-screenshot", { directory: "legacy-directory" }],
+      ])
+      this.register = (ns, schema) => {
+        this.legacy.set(ns, schema({}))
+      }
+    }
   }
   // Called once the plugin has mounted, mirroring how the loader holds the
   // entry's resolved Config.
@@ -122,7 +137,10 @@ class FormsSettings extends Service {
   // rebuilds — including the ones the locale change itself triggers.
   describe() {
     this.describes++
-    return [{ ns: this.entryId, value: this.plain(), revision: this.revision, applies: "live" }]
+    return [
+      ...(this.config ? [{ ns: this.entryId, value: this.plain(), revision: this.revision, applies: "live" }] : []),
+      ...[...(this.legacy ?? [])].map(([ns, value]) => ({ ns, value, revision: 0, applies: "live", autoGenerate: false })),
+    ]
   }
   // The host writes through the volatile reference, exactly as
   // `updateVolatile()` does in the loader.
@@ -134,6 +152,7 @@ class FormsSettings extends Service {
   }
   update(ns, patch) {
     this.writes.push({ op: "update", ns: String(ns), patch })
+    if (mixed && ns !== this.entryId) throw new Error(`No configurable plugin entry "${ns}"`)
     for (const [field, value] of Object.entries(patch)) this.setField(field, value)
     this.announce?.()
     return Promise.resolve()
@@ -174,9 +193,41 @@ ok("the language field is volatile, so a host edit does not remount the TUI",
   tui.Config?.dict?.locale?.meta?.volatile === true,
   "locale meta: " + JSON.stringify(tui.Config?.dict?.locale?.meta))
 
-const mounted = await ctx.plugin({ apply: tui.apply, inject: tui.inject, name: tui.name, Config: tui.Config }, {})
+// Cordis versions expose the mounted fiber differently; apply always receives
+// the authoritative live Config reference.
+let runningConfig
+await ctx.plugin({
+  apply(ctx, config) { runningConfig = config; return tui.apply(ctx, config) },
+  inject: tui.inject, name: tui.name, Config: tui.Config,
+}, mixed ? { theme: "nord", screenshotDirectory: "saved-directory" } : {})
 await settle(30)
-settings.attach(mounted.fiber?.config ?? mounted.config ?? {})
+settings.attach(runningConfig)
+if (mixed) {
+  const { readTuiSetting, loadWebSettings, saveWebSetting } = await import("../lib/web-settings.js")
+  ok("mixed host boots with the theme saved in Config",
+    String(lastScreen?.cells[1][0].style.bg).replace(/^#/, "") === getTheme("nord").background,
+    "background: " + lastScreen?.cells[1][0].style.bg)
+  const readingBeforeForms = settings.config
+  settings.config = null
+  ok("mixed host reads running Config before the form is active",
+    readTuiSetting(ctx, readingBeforeForms, "tui-theme", "preference") === "nord"
+    && readTuiSetting(ctx, readingBeforeForms, "tui-locale", "preference") === "system"
+    && readTuiSetting(ctx, readingBeforeForms, "tui-screenshot", "directory") === "saved-directory")
+  settings.config = readingBeforeForms
+  settings.setField("theme", "deepseek")
+  settings.setField("screenshotDirectory", "")
+  ctx.emit("loader/volatile-update", [["theme"]])
+  const page = await loadWebSettings(ctx)
+  const directory = page.items.find((item) => item.settingGroup === "tui-screenshot")
+  ok("mixed host targets the Config field even with a legacy registration",
+    directory?.ns === "tui-app" && directory?.field === "screenshotDirectory" && directory?.value === "",
+    JSON.stringify(directory))
+  await saveWebSetting(ctx, settings, directory, "new-directory").catch(() => {})
+  ok("mixed host saves the screenshot directory to the plugin entry",
+    settings.plain().screenshotDirectory === "new-directory")
+  ok("mixed host does not create legacy compatibility settings",
+    !settings.legacy.has("tui-graphics"))
+}
 
 // The real host announces a committed Config field *while* it writes it, so the
 // plugin sees the change before its own commit has finished. Announcing from
@@ -285,6 +336,28 @@ ok("System unsets the field rather than storing an id",
 ok("System resolves back to the pinned environment locale",
   lastFrame().includes("New session"),
   "last frame:\n" + lastFrame())
+
+await move(1)
+ok("the forms host exposes the theme and its default",
+  lastFrame().includes("Theme") && lastFrame().includes("DeepSeek Standard"))
+stdin.send("\r")
+await settle(30)
+await move(1)
+stdin.send("\r")
+await settle(60)
+ok("selecting a theme writes to the volatile plugin config",
+  settings.plain().theme === "github-dark" && settings.writes.some((entry) =>
+    entry.ns === "tui-app" && entry.patch?.theme === "github-dark"))
+ok("the session repaints with the selected theme",
+  lastScreen.cells[1][0].style.bg === "#0d1117" && lastFrame().includes("New session"),
+  "background: " + lastScreen.cells[1][0].style.bg)
+settings.setField("theme", "nord")
+ctx.emit("loader/volatile-update", [["theme"]])
+await settle(40)
+ok("a host-side theme change repaints the open settings and session",
+  lastScreen.cells[1][0].style.bg === "#" + getTheme("nord").background && lastFrame().includes("Nord"),
+  "background: " + lastScreen.cells[1][0].style.bg)
+ok("the theme Config field is volatile", tui.Config?.dict?.theme?.meta?.volatile === true)
 
 Object.defineProperty(process, "stdin", realStdin)
 Object.defineProperty(process, "stdout", realStdout)
