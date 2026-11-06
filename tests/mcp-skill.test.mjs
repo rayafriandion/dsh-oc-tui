@@ -89,7 +89,11 @@ for (const fact of ["$DSH_HOME/mcp.json", ".dsh/mcp.json", "%USERPROFILE%\\.dsh"
 // Every JSON block in the shipped body must be valid and copy-pasteable. A block
 // is either a whole document (`version` + `servers`) or one standalone record,
 // and the three transports must each appear as a complete record.
-const blocks = [...SKILL_TEXT.matchAll(/```json\n([\s\S]*?)```/g)].map((match) => match[1])
+const jsonBlocks = (text) => [...text.matchAll(/```json\r?\n([\s\S]*?)```/g)].map((match) => match[1].replace(/\r\n/g, "\n"))
+const blocks = jsonBlocks(SKILL_TEXT)
+eq("JSON examples are extracted identically with LF and CRLF",
+  jsonBlocks(SKILL_TEXT.replace(/\r\n/g, "\n")),
+  jsonBlocks(SKILL_TEXT.replace(/\r\n/g, "\n").replace(/\n/g, "\r\n")))
 ok("the body carries JSON examples", blocks.length >= 4, "blocks=" + blocks.length)
 const documents = []
 const records = []

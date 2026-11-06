@@ -97,13 +97,10 @@ npm run check   # node --check over lib/, bin/
 npm test        # standalone smoke tests (no dsh needed)
 ```
 
-`tests/esc-questions.test.mjs` reports 8 failures on an otherwise clean checkout in
-this environment. It is a dependency problem, not a defect in the tree: the installed
-`@deepseek-ai/dsh-user-questions` was pinned back to an `rc` revision whose peer
-`dsh-agent` conflicts with the rest, and nothing calls
-`userQuestions.registerProvider()`. Do not treat those failures as yours to fix, and
-do not "fix" them by unpinning the dependency — the pin is what lets the tarball
-install cleanly (see the peer-dependency note in the README).
+`tests/esc-questions.test.mjs` bridges the pinned `rc` user-questions provider to
+the real Cordis waterfall used by the newer host. Keep the dependency pin: it
+lets the tarball install cleanly (see the peer-dependency note in the README).
+The test must pass both with this bridge and with the host's waterfall service.
 
 ## Settings must work on both dsh generations
 
