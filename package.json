@@ -42,7 +42,10 @@
     "skills",
     "cordis.patch.yml",
     "dsh-plugin.json",
-    "docs/用户手册.md"
+    "docs/用户手册.md",
+    "docs/user-guide.md",
+    "docs/dsh-std-接入说明.md",
+    "docs/assets"
   ],
   "engines": {
     "node": "^22.19 || >=24",
