@@ -2,6 +2,7 @@
 // image encoders, markdown extensions, and the mermaid provider chain.
 // Run: node tests/graphics.test.mjs  (no dsh environment required)
 import { decodeKey } from '../lib/term.js'
+import { runeWidth } from '../lib/util.js'
 import { loadMermaidEngine } from '../lib/mermaid-ascii.js'
 
 // The engine is module-shared: awaiting it here makes the real import cost a
@@ -445,13 +446,16 @@ eq('contentImages ignores text and partial refs', contentImages([
 {
   const app = new App({ cols: 80, rows: 24, on() {} })
   app.graphicsProtocol = 'kitty'
+  app.setSession({ id: 's', title: 'Image placement' })
   app.addUser('图', { images: [{ kind: 'ref', key: 'ref:x', ref: {} }] })
   app.setImageResult('ref:x', { state: 'done', protocol: 'kitty', cellsW: 10, cellsH: 4 })
   const lines = app._blockLines(app.blocks[0], 76)
   const imageLines = lines.filter((l) => l.image)
   eq('protocol render reserves cellsH rows', imageLines.length, 4)
   eq('first annotation row is the top', imageLines[0].image.top, true)
-  eq('annotation carries placement', { x: imageLines[0].image.x, w: imageLines[0].image.cellsW, h: imageLines[0].image.cellsH }, { x: 2, w: 10, h: 4 })
+  eq('annotation aligns with the panel text', { x: imageLines[0].image.x, w: imageLines[0].image.cellsW, h: imageLines[0].image.cellsH }, { x: 3, w: 10, h: 4 })
+  const screen = app.render()
+  eq('painted protocol image shares the user text column', screen.images[0]?.x, 5)
 }
 {
   const app = new App({ cols: 80, rows: 24, on() {} })
@@ -542,6 +546,33 @@ const mdText = (md) => md.map((l) => Array.isArray(l) ? l.map((s) => s.text).joi
   ok('table rows span the grid width', md.every((l) => l.reduce((w, s) => w + s.text.length, 0) <= 40))
 }
 {
+  const md = renderMarkdown(
+    '| 文件 | 行 | 回答什么 |\n| --- | --- | --- |\n' +
+    '| [中文文件名称十分漫长](https://example.com) | 355 | 中文内容特别特别特别长 |\n' +
+    '| **abcdefgh**remaining | 12 | 混合 English 与中文 |\n' +
+    '| 短 | 1 | 结束 |', T, 42)
+  const screen = new Screen(42, md.length)
+  md.forEach((line, y) => {
+    let x = 0
+    for (const seg of line) x = screen.text(x, y, seg.text, seg.style)
+  })
+  const columns = (row, chars) => row.flatMap((cell, x) => cell.ch && chars.includes(cell.ch) ? [x] : [])
+  const expected = columns(screen.cells[0], '╭┬╮')
+  ok('CJK table has truncated cells', mdText(md).some((row) => row.includes('…')))
+  ok('CJK table preserves all vertical borders after clipping',
+    screen.cells.slice(1, -1).every((row, i) =>
+      JSON.stringify(columns(row, i === 1 ? '├┼┤' : '│')) === JSON.stringify(expected)))
+  eq('CJK table bottom border aligns', columns(screen.cells.at(-1), '╰┴╯'), expected)
+  ok('CJK table rows stay within the terminal width', md.every((line) =>
+    line.reduce((sum, seg) => sum + [...seg.text].reduce((w, ch) => w + runeWidth(ch), 0), 0) <= 42))
+  ok('truncated table link retains its target', md[3].some((seg) => seg.style?.link === 'https://example.com'))
+}
+{
+  const md = renderMarkdown('| 列 | x |\n| --- | --- |\n| **abcdefghijk**trailing | y |', T, 33)
+  const row = mdText(md)[3]
+  ok('table truncation marks overflow across style boundaries', row.includes('abcdefghijk…'))
+}
+{
   const text = mdText(renderMarkdown('- one\n  - one.a\n- two', T, 40))
   ok('nested list indents', text.some((t) => t.startsWith('  - ') && t.includes('one.a')), JSON.stringify(text))
   eq('nested list keeps depth-0 items', text.filter((t) => t.startsWith('- ')).length, 2)
@@ -570,6 +601,56 @@ const mdText = (md) => md.map((l) => Array.isArray(l) ? l.map((s) => s.text).joi
 {
   const flat = renderMarkdown('```js\nconst a = 1\n```', T, 40).flat().filter(Boolean)
   ok('js code gets keyword color', flat.some((s) => s.style?.fg === T.syntaxKeyword && s.text.includes('const')), JSON.stringify(flat.slice(0, 3)))
+}
+{
+  const code = '  const 中文 = "hello world";'
+  const md = renderMarkdown('```js\n' + code + '\n\n\treturn 42\n```', T, 12)
+  const rows = md.slice(1, -1)
+  const screen = new Screen(12, rows.length)
+  for (let y = 0; y < rows.length; y++) {
+    let x = 0
+    for (const seg of rows[y]) x = screen.text(x, y, seg.text, seg.style)
+  }
+  eq('code block shows its language', rows[0][1].text, 'js')
+  ok('code block paints every cell including blank and wrapped lines',
+    screen.cells.every((row) => row.every((cell) => cell.style?.bg === T.codeBg)))
+  eq('wrapped code preserves CJK, spaces and indentation',
+    rows.slice(1, 5).map((row) => row.slice(1, -1).map((s) => s.text).join('')).join(''), code)
+  eq('tabs expand at code column stops',
+    rows.slice(6).map((row) => row.slice(1, -1).map((s) => s.text).join('')).join(''), '    return 42')
+  ok('highlight styles survive wrapping',
+    rows.flat().some((s) => s.style?.fg === T.syntaxKeyword && s.text.includes('const')) &&
+    rows.flat().some((s) => s.style?.fg === T.syntaxString && s.text.includes('ello')))
+}
+{
+  const python = renderMarkdown('```python\nprint("你好", 42)\n```', T, 28)
+  const segments = python.flat()
+  ok('python builtins, strings and numbers use syntax colors',
+    segments.some((s) => s.text === 'print' && s.style?.fg === T.syntaxType) &&
+    segments.some((s) => s.text.includes('你好') && s.style?.fg === T.syntaxString) &&
+    segments.some((s) => s.text === '42' && s.style?.fg === T.syntaxNumber))
+  const unknown = renderMarkdown('```unlisted\nplain text\n```', T, 24)
+  ok('unknown language keeps its label and plain code',
+    mdText(unknown).some((s) => s.includes('unlisted')) &&
+    unknown.flat().some((s) => s.text === 'plain text' && s.style?.fg === T.markdownCodeBlock))
+  const untagged = renderMarkdown('```\nplain text\n```', T, 24)
+  eq('untagged code has no invented language', mdText(untagged).filter(Boolean).length, 1)
+  const indented = renderMarkdown('    indented code', T, 24)
+  ok('indented markdown code receives a full-width background',
+    indented.some((line) => line.length > 0 && line.every((s) => s.style?.bg === T.codeBg) &&
+      line.reduce((sum, s) => sum + [...s.text].reduce((w, ch) => w + runeWidth(ch), 0), 0) === 24))
+}
+{
+  const quoted = renderMarkdown('> ```js\n> const x = 1\n> ```', T, 20)
+  const rows = quoted.filter((line) => line.length)
+  ok('quoted code keeps the quote prefix outside its background',
+    rows.every((row) => row[0].text === '▍ ' && row[0].style?.bg !== T.codeBg &&
+      row.slice(1).every((seg) => seg.style?.bg === T.codeBg)))
+  for (const width of [1, 2, 3, 8]) {
+    const narrow = renderMarkdown('```\n中文a\n```', T, width)
+    ok('code remains within width ' + width, narrow.every((row) =>
+      row.reduce((sum, seg) => sum + [...seg.text].reduce((w, ch) => w + runeWidth(ch), 0), 0) <= width))
+  }
 }
 {
   const md = renderMarkdown('Hello **world**\n- one\n> quote\n# Head\npara two', T, 40)
@@ -628,7 +709,7 @@ console.log('')
 if (failed > 0) { console.log(failed + ' test(s) failed'); process.exit(1) }
 console.log('all graphics tests passed')
 
-// ---- flat transcript layout + mermaid consumption (ui.js) ----
+// ---- conversation panels + mermaid consumption (ui.js) ----
 
 test_bubbles: {
   const app = new App({ cols: 60, rows: 24, on() {} })
@@ -643,12 +724,12 @@ test_bubbles: {
   ok('flat rows stay within the frame', screen.cells.every((row) => row.length === 60))
   const rows = screen.cells.map((r) => r.map((c) => c.ch).join(''))
   const userRow = rows.find((r) => r.includes('中文消息'))
-  ok('user turn opens with the pointer', userRow !== undefined && userRow.startsWith('  ❯ '))
-  ok('wrapped user text hangs under the pointer', rows.slice(0, 20).some((r) => /^ {4}\S/.test(r)))
-  ok('user turn trails its timestamp', rows.slice(0, 20).some((r) => / · \d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\s*$/.test(r)))
-  ok('assistant labels the turn with dsh', rows.some((r) => r.trimStart().startsWith('dsh · ')))
-  ok('assistant answer indents under the label', rows.some((r) => r.startsWith('  回答包含')))
-  ok('the transcript draws no box frame',
+  ok('user turn has the accented left border', userRow !== undefined && userRow.startsWith('  ┃  '))
+  ok('wrapped user text stays inside the panel', rows.slice(0, 20).filter((r) => r.startsWith('  ┃  ')).length >= 4)
+  ok('user timestamp occupies its own panel row', rows.slice(0, 20).some((r) => /^  ┃  \d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\s*$/.test(r)))
+  ok('assistant metadata sits in the response footer', rows.some((r) => r.trimStart().startsWith('▣  dsh')))
+  ok('assistant answer aligns with the user text', rows.some((r) => r.startsWith('     回答包含')))
+  ok('the transcript avoids rounded box frames',
     !rows.slice(0, 20).join('\n').includes('╭') && !rows.slice(0, 20).join('\n').includes('│'))
 }
 test_mermaid: {

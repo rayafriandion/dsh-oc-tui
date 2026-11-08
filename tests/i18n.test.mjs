@@ -95,6 +95,23 @@ for (const { id, native } of LOCALES) {
   if (bad.length > 0) console.log('     ' + bad.slice(0, 8).join(', '))
 }
 
+// ---- the documented newline key -------------------------------------------
+// Ctrl+Enter is the binding the user reads; Ctrl+J is the same byte as a line
+// feed (that is literally what it sends), so it keeps working in a terminal
+// that cannot disambiguate, but it must never come back as the advertised key.
+// The composer footer and the help overlay disagreeing is exactly how the
+// Language row went missing once.
+for (const { id, native } of LOCALES) {
+  const catalog = id === 'en' ? en : await catalogFor(id)
+  const bad = ['composer.keys', 'help.ctrlEnter'].filter((key) => {
+    const text = String(catalog[key] ?? '')
+    if (text.includes('Ctrl+J')) return true
+    return key === 'composer.keys' && !text.includes('Ctrl+Enter')
+  })
+  ok(native + ': newline key is Ctrl+Enter (' + id + ')', bad.length === 0)
+  if (bad.length > 0) console.log('     ' + bad.join(', '))
+}
+
 // ---- message resolution ---------------------------------------------------
 
 setLocale('en')

@@ -1,0 +1,616 @@
+# dsh-oc-tui User Guide
+
+[← Project overview](../README.md) · [中文用户手册](用户手册.md)
+
+**A terminal UI for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)** — an opencode-inspired chat client that boots inside the `dsh` process as a profile app plugin.
+
+[![npm latest](https://img.shields.io/npm/v/dsh-oc-tui?label=npm&color=BF392B)](https://www.npmjs.com/package/dsh-oc-tui)
+[![awesome-dsh-plugin](https://img.shields.io/badge/awesome--dsh--plugin-marketplace-BF392B)](https://awesome-dsh-plugin.com/zh/p/rayafriandion/dsh-oc-tui/)
+[![License: LGPL-3.0-or-later](https://img.shields.io/badge/license-LGPL--3.0--or--later-blue.svg)](../LICENSE)
+[![Node](https://img.shields.io/badge/node-%3E%3D22-339933.svg)](https://nodejs.org)
+
+`dsh-oc-tui` renders the harness's durable event stream in your terminal — streaming replies, tool activity, todo lists, thinking blocks — and routes what you type back into the agent. Model routing, tool execution, approvals, commands, durable sessions, and credentials stay owned by DSH; this package owns terminal input and presentation.
+
+Published on **npm** as [`dsh-oc-tui`](https://www.npmjs.com/package/dsh-oc-tui) and listed in the [**awesome-dsh-plugin**](https://awesome-dsh-plugin.com/zh/p/rayafriandion/dsh-oc-tui/) marketplace.
+
+> 中文文档：[docs/用户手册.md](用户手册.md)
+
+## Table of contents
+
+- [Features](#features)
+- [Requirements](#requirements)
+- [Install](#install)
+- [Quick start](#quick-start)
+- [Usage](#usage)
+  - [Keybindings](#keybindings)
+  - [Slash commands](#slash-commands)
+  - [Interactive prompts](#interactive-prompts)
+  - [Thinking intensity](#thinking-intensity)
+  - [Session stats and the context meter](#session-stats-and-the-context-meter)
+  - [The status rail](#the-status-rail)
+  - [Settings](#settings)
+  - [Language](#language)
+  - [MCP servers](#mcp-servers)
+  - [In-app updates](#in-app-updates)
+- [How it works](#how-it-works)
+- [@dsh-std interop](#dsh-std-interop)
+- [Development](#development)
+- [Troubleshooting](#troubleshooting)
+- [Known limitations](#known-limitations)
+- [Layout](#layout)
+- [License](#license)
+
+## Features
+
+| | |
+| --- | --- |
+| **Durable sessions** | Create, resume, list, and delete sessions; the transcript is rebuilt from the persisted event log, so a resumed session looks exactly like the one you left. |
+| **Live streaming** | Assistant text and reasoning stream token by token; thinking renders in its own collapsible box that stays collapsed while streaming. |
+| **Real image rendering** | Images in the transcript render as real pixels — kitty graphics, iTerm2 inline images, or sixel, probed from the terminal itself (works over SSH), with a truecolor half-block preview on terminals that support no protocol. Pasted images, stored attachments, and markdown images all flow through one pipeline. See [Graphics rendering](#graphics-rendering). |
+| **Mermaid diagrams** | A ` ```mermaid ` fence renders as a real diagram through a provider chain — local `mmdc` if installed, otherwise mermaid.ink (gated by a setting) — into the same image pipeline; offline it degrades to highlighted source. |
+| **Full markdown** | Tables in rounded boxes, nested and task lists, syntax-highlighted code (190+ languages), and clickable OSC 8 hyperlinks, rendered from markdown-it's CommonMark + GFM token stream. |
+| **OpenCode-style conversation** | User messages preserve literal text inside a padded panel with a blue left border. Assistant markdown shares the same reading column, with collapsible thinking above and a model / duration footer below. Consecutive tool calls stay compact; commands show a ten-line output preview, and clicking a tool expands its result. Both sides retain clear gutters, including around code and images. |
+| **Tool activity** | One row per tool: a status mark, the action in the tool's own accent (`read` cyan, `run` gold, `edit` light blue, `todo` mint), and its target. Click the row to expand the full result under a `⎿` gutter. |
+| **Interactive questions** | The model can pause and ask you — option lists, multi-select, free text, and a scrollable plan review — all inline in the terminal. See [Interactive prompts](#interactive-prompts). |
+| **Inline approvals** | `approval/request` prompts are answered with `y` / `n` without leaving the UI; the box shows the action and the reason, with room for origin, risk and details when a `@dsh-std` request carries them. |
+| **Session stats** | One stats strip above the composer — turns/steps, LLM and tool wall time, average TTFT, decode throughput, cache-hit rate, and billed input/output tokens — folded from durable events. See [Session stats and the context meter](#session-stats-and-the-context-meter). |
+| **Stats window** | Click the strip or the context meter, or type `/stats`, for the full session-statistics and token-usage breakdown. |
+| **Context meter** | Live context occupancy (`ctx ▓▓░░ 32K/128K 25%`), with the system/tools/messages composition in the same window. |
+| **Status rail (wide windows)** | From 140 columns a right-hand rail carries the expanded status — model, thinking intensity, context, session figures — plus the session's current goal (`/goal`) and its subagent activity, scrollable with `Shift+↑/↓` or the wheel. Narrow windows keep the bottom status row. See [The status rail](#the-status-rail). |
+| **Thinking intensity** | `Tab` cycles the current model's real reasoning levels; `Ctrl+E` opens a slider. The level is applied per request and persisted. |
+| **Shared settings** | The same host settings namespaces the Web UI uses — general, sessions, per-provider model configuration, credentials — persisted to `$DSH_HOME/settings.yaml`. |
+| **17 languages** | Every string the TUI draws — chrome, transcript, dialogs, toasts, command help — comes from a catalog, so the whole interface follows one setting: `Ctrl+P → Language`, or the environment when no preference is stored. English, Chinese (simplified and traditional), Japanese, Korean, German, French, Spanish, Portuguese (Brazil), Italian, Russian, Polish, Dutch, Turkish, Vietnamese, Indonesian and Arabic. See [Language](#language). |
+| **MCP servers** | A `Ctrl+P → MCP` tab manages MCP servers from the TUI itself: add or edit `stdio` / `HTTP` / `SSE` servers, remove them, and watch each connection state with the tools it registered. Scope is per user or per project directory, and the bundled `mcp-import` skill lets the model add servers for you. MCP is optional — with no server, a failing server, or no MCP client in the host at all, the TUI runs exactly as before. See [MCP servers](#mcp-servers). |
+| **In-app updates** | Detect and switch versions of `@deepseek-ai/dsh` and `dsh-oc-tui` from inside the TUI, with Windows-safe deferred installs. |
+| **Zero-dependency terminal engine** | Raw mode, alternate screen, a diffing cell buffer, truecolor ANSI, CJK-aware widths, SGR + legacy X10 mouse decoding, and IME caret anchoring. |
+
+## Requirements
+
+| | |
+| --- | --- |
+| Node.js | >= 22 |
+| dsh CLI | `@deepseek-ai/dsh` — e.g. `npm install -g @deepseek-ai/dsh` |
+| pnpm | on `PATH`; `dsh plugin` forwards to it |
+| Terminal | an interactive terminal (Windows Terminal / ConPTY, iTerm2, GNOME Terminal, …) |
+| Model route | a usable route in `$DSH_HOME/settings.yaml` + `$DSH_HOME/.credentials.yaml` (the same setup the Web GUI uses) |
+
+```sh
+dsh --version
+pnpm --version
+```
+
+**Compatibility.** Verified against dsh `0.2.1-rc.2`, `0.2.0-rc.2` and `0.1.2-rc.1` (`0.1.1-rc.2` before that). `0.2.1-rc.5` was compared package by package: its core is byte-identical to rc.2, and the one display change — reasoning signatures — is handled here as well. The supported range is declared as `engines.dsh` (`>=0.1.1-rc.2 <0.3.0-0`) in `package.json`: since dsh 0.2.1 the install gate reads that declaration first and ignores the peer list, so a host outside the range is refused at load until its exact version is exempted with `dsh plugin allow-version`. DSH renamed parts of the session API in 0.1.2 — `Session.events` became `snapshotEvents()` — and this plugin reads whichever accessor the host provides, so one build serves both lines.
+
+**dsh 0.2.2 changed how a model is chosen, and this build follows both lines.** From `0.2.2-rc.1` the step's route is fixed before prompt assembly and before `agent/pre-step`, and the `agent/request` waterfall now *rejects* a listener that proposes another provider, model or reasoning effort — it throws `agent/request proposed "…" after step preparation fixed "…"` and the turn dies. A choice has to be recorded between steps with `agent.model.select()`, which appends a durable `model/selection` event. This plugin detects `agent.model.select` on the live agent: when it exists, `/model`, `/provider`, the reasoning slider and the stored reasoning level all go through it, and the waterfall is left untouched; on `0.2.1` and older, where no agent owns a selection, the waterfall still carries them. One build serves both — nothing to configure. Reading a session's route now prefers the recorded selection over the options it was created with, so a resumed session shows the model it will actually use. Nothing else in `0.2.2` needed adapting: the session, projection, command, skill, attachment, approval, question, MCP-client and settings APIs the TUI uses are unchanged, and dsh's own new minimum of Node.js `24.9` is only dsh's requirement (this plugin still runs on `^22.19`).
+
+**The TUI refuses to start on a dsh it was not built for.** At boot it reads the
+version of the dsh that launched the process (`@deepseek-ai/dsh-app-boot`'s
+manifest, falling back to the CLI package and then to the `dsh` on `PATH`) and
+checks it against two declarations shipped in this package: `engines.dsh`, the
+range the plugin supports, and `dshSupport.tested`, the versions the build was
+actually run against. A host outside either list gets one full-screen page — the
+version that is running, the versions that are verified, the recommended one and
+the command to install it — and nothing else: no session, no settings, no update
+check, and `Esc`/`Ctrl+C` is the only input it accepts. The exit status is `1`.
+The page never appears on the same major line by accident: dsh's own preflight
+disables the plugin's rows *before* they mount when `engines.dsh` does not match,
+so in practice you see it after an explicit `dsh plugin allow-version`, or on a
+release inside the range that this build has not been tested against — exactly
+the case `0.2.2-rc.1` was, where the interface started but every model switch
+threw. Two ways out: install the recommended dsh, or update this plugin
+(`npm i -g dsh-oc-tui@latest`) if a newer build already lists your version. For a
+maintainer testing an unreleased host, `DSH_TUI_IGNORE_DSH_VERSION=1` bypasses
+the check for that process only.
+
+**dsh (the harness) 0.2.0 is a breaking update — upgrade this plugin first.** From dsh `0.2.0-rc.1` the agent-preset packages were split: the roster provider `@deepseek-ai/dsh-agent-presets` (which shipped its own presets) became `@deepseek-ai/dsh-agent-preset-registry`, and a new `@deepseek-ai/dsh-agent-preset` package is only a *declarative* preset row that injects the service the registry provides. A TUI older than `0.1.5` names the old provider, and dsh reports it at every boot:
+
+```
+dsh: disabling profile plugin row "agent-presets": Plugin @deepseek-ai/dsh-agent-presets@0.1.1-rc.2 is
+incompatible with dsh 0.2.0-rc.2: peerDependencies {…}. Running it may cause crashes or data loss.
+```
+
+The TUI still starts, but Settings → Default preset loses its roster (the row is hidden once no provider mounts it). Updating `dsh-oc-tui` to `0.1.5` or later removes the report: this bundle mounts no roster row at all, because no single package name works on both lines — the old one warns on dsh 0.2.0, the singular never activates, and the registry activates empty unless a host declares presets. A dsh 0.2.0 profile that wants a roster mounts the registry plus its own preset declarations, exactly as `dsh-web-app` does. Nothing about your sessions changes in either direction; `cordis.patch.yml` documents the same decision next to the rows.
+
+## Install
+
+### From npm
+
+The package is published on npm as [`dsh-oc-tui`](https://www.npmjs.com/package/dsh-oc-tui). Install it into the `tui` profile:
+
+```sh
+dsh plugin --profile tui add -w dsh-oc-tui
+```
+
+Or install the launcher globally — that puts the `dsh-oc-tui` command on `PATH`, which then boots `dsh --profile tui`:
+
+```sh
+npm install -g dsh-oc-tui
+```
+
+### Version channels
+
+npm carries two channels for this package: **`latest`** holds the stable releases, **`next`** the pre-releases (any `-pre`, `-rc`, `-alpha` or `-beta` suffix). Untagged installs — `dsh plugin … add -w dsh-oc-tui` and `npm install -g dsh-oc-tui` above — therefore give you the newest stable version, never a release candidate. Since `0.2.0` the stable channel carries the visual-experience work, so nothing here needs `@next` any more. The [awesome-dsh-plugin](https://awesome-dsh-plugin.com/zh/p/rayafriandion/dsh-oc-tui/) marketplace entry links to the same package, so an install started from it lands on the stable channel too.
+
+To run a pre-release, name the tag: `dsh plugin` forwards the spec to pnpm untouched, and pnpm resolves dist-tags.
+
+```sh
+dsh plugin --profile tui add -w dsh-oc-tui@next   # newest pre-release
+npm install -g dsh-oc-tui@next
+```
+
+Unreleased work in this repository carries no dist-tag at all, so install it from a packed tarball or a checkout (see [From a checkout or tarball](#from-a-checkout-or-tarball)):
+
+```sh
+npm pack                                   # -> dsh-oc-tui-<version>.tgz
+dsh plugin --profile tui add -w ./dsh-oc-tui-<version>.tgz
+```
+
+This README describes the current source tree, which can be ahead of the published release — a feature documented here is only guaranteed to exist in a stable build once that version is on npm.
+
+### One-command installers
+
+The repository ships installers that check Node >= 22, make sure `pnpm` exists, install the plugin into the `tui` profile, and can also add the `dsh-oc-tui` launcher globally.
+
+```sh
+# Linux / macOS
+curl -fsSL https://raw.githubusercontent.com/rayafriandion/dsh-oc-tui/main/install.sh | bash
+```
+
+```powershell
+# Windows (PowerShell)
+powershell -ExecutionPolicy Bypass -Command "iwr https://raw.githubusercontent.com/rayafriandion/dsh-oc-tui/main/install.ps1 -OutFile install.ps1; & .\install.ps1"
+```
+
+Run `./install.sh` / `.\install.ps1` from a checkout instead, and add `--launcher` / `-Launcher` to also put the `dsh-oc-tui` command on `PATH`. Other flags: `--local` (`-Local`) installs the current checkout, `--source <spec>` (`-Source <spec>`) uses a custom source, `--profile <name>` (`-Profile <name>`) targets another profile.
+
+### From a checkout or tarball
+
+```sh
+npm pack                                             # -> dsh-oc-tui-<version>.tgz
+dsh plugin --profile tui add -w ./dsh-oc-tui-<version>.tgz
+```
+
+`dsh plugin` anchors relative paths to the directory you invoke it from before forwarding to pnpm.
+
+### Why `-w`
+
+The profile directory declares itself a pnpm workspace root (`pnpm-workspace.yaml` → `packages: [.]`), so pnpm refuses a bare `add` with `ERR_PNPM_ADDING_TO_ROOT`. `-w` makes the dependency land in the profile's own manifest — which is exactly what it is. `dsh plugin` then reconciles `dsh.profile.bundles` against what is installed.
+
+### What the install does
+
+1. `dsh plugin` initializes `$DSH_HOME/profiles/tui` on first use (`@deepseek-ai/dsh-base` plus an empty user patch layer).
+2. pnpm installs `dsh-oc-tui` into the profile's `node_modules`.
+3. Because the package declares `dsh.bundle.patch`, dsh appends `dsh-oc-tui` to `dsh.profile.bundles`.
+4. `dsh --profile tui` composes the base layer, this bundle's rows, and your own patch — no manual editing required.
+
+Verify without booting:
+
+```sh
+dsh --profile tui --dump-config
+```
+
+The dump shows a `# == dsh-oc-tui` layer containing `tui-startup`, `tui-app`, and the `tool-ask-user` row — three rows, no agent-preset one (see the compatibility note above).
+
+## Quick start
+
+```sh
+dsh --profile tui                        # title screen; your first message creates a session
+dsh --profile tui --resume <sessionId>   # resume a persisted session
+dsh --profile tui --model <modelId>      # default model for new sessions
+dsh --profile tui --provider <route>     # default provider route
+dsh --profile tui --no-sidebar           # start without the session rail
+dsh --profile tui --help                 # the TUI's own flags
+```
+
+The stock launcher hardcodes only `web` and `plugin` as bare subcommands, so `--profile tui` is the intended shape. Want the literal `dsh tui`? Add a shell alias:
+
+```powershell
+function tui { dsh --profile tui @args }   # PowerShell $PROFILE
+```
+
+```bat
+doskey tui=dsh --profile tui $*            :: CMD
+```
+
+### Convenience launcher
+
+The package also ships a `dsh-oc-tui` binary that is equivalent to `dsh --profile tui`, but checks first that the profile actually has the plugin installed and prints the one-time install command when it does not.
+
+```sh
+dsh-oc-tui                 # boot the tui profile
+dsh-oc-tui --profile mytui # boot a different profile
+dsh-oc-tui --help          # launcher help
+dsh-oc-tui --version       # launcher version
+```
+
+It prefers the `dsh` on `PATH` and falls back to `npx --yes @deepseek-ai/dsh`. Install it with `npm install -g dsh-oc-tui`.
+
+| Environment variable | Effect |
+| --- | --- |
+| `DSH_TUI_PROFILE` | Default profile when `--profile` is absent (default `tui`). |
+| `DSH_TUI_SKIP_CHECK` | Set to `1` to skip the profile preflight (advanced installs). |
+
+## Usage
+
+The home screen follows OpenCode's centered prompt layout: a one-line DeepSeek gradient mark, a restrained input panel, and nearby settings, thinking and branch shortcuts. Conversations use a bottom composer, subtle user-message backgrounds and a separate wide-screen status rail. The blue input accent stays still; only active work animates. Settings dim the background and adapt to narrow terminals with horizontal categories and stacked label/value rows. This layout uses the existing renderer and dependencies.
+
+Choose a color theme under `Ctrl+P → Main → Theme`. DeepSeek Standard is the default; GitHub Dark, Dracula, VS Code Dark+ and Nord are also available. Changes apply immediately and the choice is saved.
+
+### Keybindings
+
+| Key | Action |
+| --- | --- |
+| `Enter` | Send the message. |
+| `Ctrl+Enter` / `Shift+Enter` / `Alt+Enter` | Insert a newline. |
+| `Ctrl+C` | Clear a non-empty prompt, cancel the running turn, or press twice while idle to exit. |
+| `Ctrl+P` | Open Settings. |
+| `Ctrl+S` | Save a framed PNG of the current TUI view. |
+| `Ctrl+E` | Toggle the thinking-intensity slider below the composer. |
+| `Ctrl+G` | Empty page: open the git branch switcher. Inside a session: a note that it is empty-page only. |
+| `Tab` | Complete a slash suggestion; otherwise cycle the thinking intensity. In Settings, switch categories. |
+| `Ctrl+N` | New session. |
+| `Ctrl+D` | In Settings → Manage sessions: delete the focused session (press twice to confirm). |
+| `Ctrl+L` | Clear the transcript view. |
+| `Up` / `Down` | Move the caret across a multi-line prompt; on the first/last row, step through input history. |
+| `Shift+Up` / `Shift+Down` | Scroll the status rail (wide windows); without the rail they act as `Up` / `Down`. |
+| `Left` / `Right` | Move the caret within the input box. |
+| `PgUp` / `PgDn` | Scroll the transcript. |
+| `Esc` | Close the session stats window, the thinking slider, or help; cancel an approval; cancel a running turn; clear the prompt you are typing. |
+| `Esc Esc` | Idle with an empty prompt: open the rewind picker. |
+| `y` / `n` | Answer an inline approval prompt. |
+
+**Mouse.** The wheel scrolls the transcript — or the status rail when the pointer rests over it, or the Settings window while it is open. Hold the left button and drag across the transcript to select text, then press the right button to copy the selection.
+
+**Screenshots.** `Ctrl+S` saves the visible TUI, including terminal images, as a PNG with a window-style frame. The result appears in the top-right corner. The default destination is the user's Pictures folder; change it under `Ctrl+P → Main → Screenshot folder`. Clear the field to restore the default. The screenshot contains the visible screen, not the entire scrollback.
+
+### Slash commands
+
+Built in: `/help` `/settings` `/new` `/resume <id>` `/model <id>` `/provider <route>` `/rewind` `/branch` `/stats` `/clear` `/cancel` `/quit` (`/exit` also works).
+
+Typing `/` opens a bounded suggestion list. Use `↑`/`↓` to select, `Tab` or a click to complete, and `Esc` to dismiss it while keeping the draft. `Enter` completes an unfinished command; an exact command executes immediately.
+
+**Rewind.** `Esc Esc` (or `/rewind`) lists the prompts of the live session. Restoring the **conversation** forks a new session from the events before the chosen prompt — the parent session is left untouched on disk, exactly as the harness's own `session/fork` does — and the picker lands on the most recent prompt, so `Enter` twice rewinds the last turn. `/rewind <n|last> [conversation|code|both]` runs it without the picker. The fork starts with an **empty inbox**: a cut before a turn also cuts the inbox claim that turn performed, so anything the parent had queued — including the prompt you rewound away from — is not delivered again; it stays in the parent's log, and the result line says `dropped N inherited pending input` when there was any. Restoring **files** is best-effort and fenced: it needs a git worktree (anywhere else the rewind reports `files not restored (not a git worktree)` and changes nothing), it rewrites tracked files from `HEAD` without touching the index, and it removes an untracked file only when the transcript's first recorded write to that path is at or after the rewind point. Everything it overwrites or deletes is copied to `$DSH_HOME/rewind-backups/<sessionId>/<timestamp>/` first, and the result line names that directory. Because the log stores no file contents, a tracked file returns to its last commit, not to its exact state at the rewind point.
+
+Harness commands — `/compact`, `/goal`, `/plan`, … — are forwarded to `ctx.commands` and run without a model turn. They need a live session: on the title screen the TUI answers `/<name>: start a session first` instead of dropping the command silently.
+
+`/stats` is the TUI's own command: it toggles the [session stats window](#session-stats-and-the-context-meter) and, like the harness commands, needs a live session.
+
+**Git branches.** `Ctrl+G` (or `/branch`) on the empty page opens the branch switcher: local branches under one header, remote-tracking branches under another, the current one carrying git's own `*` marker. `Enter` checks the selected branch out — a remote-tracking branch with no local counterpart goes through the tracking branch git's own DWIM would create for it (`origin/feature` → `feature`), and one whose local branch already exists switches to that one instead. `p` pulls updates (`git fetch --all --prune`, then `git pull --ff-only` — a diverged branch is refused rather than merged, because the TUI has no way to resolve the conflict), `r` re-reads the refs, `Esc` closes. The window reports each outcome on its subtitle line and the title screen's `git:` line follows the switch. Checking out a branch rewrites the working tree every session in the process is rooted in, so the window is offered on the empty page only: inside a session the same shortcut and command answer with a note instead of opening it. Outside a git worktree — or with no `git` on `PATH` — the window says so and changes nothing.
+
+### Interactive prompts
+
+**Approvals.** When a tool needs permission, the composer area is replaced by an approval box. The first row carries the action (`Approval · <tool>`) with the key hints riding along when they fit; the explanation the request supplies follows as a `Summary ·` row. `y` allows once, `n` rejects, `Esc` cancels. A request from a `@dsh-std` component can additionally carry `Origin`, `Risk` and `Details` rows — they are drawn when present and omitted when not, a detail marked private shows its label but not its value, and on a narrow terminal the middle yields with a `… N more` marker while the action and the hints always survive. The plugin also honours the effective permission preset, so an auto-approving preset does not prompt at all.
+
+An approval that outlives the deadline its caller set disappears on its own. That is an **expiry**, not a cancellation: the caller is told `expired` rather than `cancelled`, so a timeout can never be read as a human decision.
+
+**Questions.** The model can ask you directly through the `ask_user_question` tool. The tool is declared by this bundle's `tool-ask-user` row — `dsh-base` mounts the `user-questions` service but not the tool, and a TUI session composes from the base rather than from an agent preset — and it is answered by a modal:
+
+| Key | Action |
+| --- | --- |
+| `Up` / `Down` | Move between options (wrapping). |
+| `Space` | Toggle the highlighted option (multi-select) or select it (single choice). |
+| `Enter` | Continue: a single choice is selected and advances; on the free-text row it starts editing; in a multi-select it confirms the toggled set. |
+| any printable key | Jump into the free-text row and start typing. |
+| `PgUp` / `PgDn`, wheel | Scroll a long plan or detail pane. |
+| `Esc` | Defer: decline to answer here (`Esc` while editing returns to the options). |
+| `Ctrl+C` | Still cancels the running turn; the pending question is withdrawn. |
+
+Questions are staged one at a time, exactly as the Web UI composer stages them, and the answer encoding is identical: a free-text answer replaces the selection for a single-select question and accompanies it for a multi-select one.
+
+A question carrying the `plan-review` intent — what `exit_plan_mode` sends — renders the plan markdown in a scrollable pane above `Approve` / `Keep planning`. Answering `Approve` exits plan mode and the model continues; anything else keeps planning.
+
+Deferring is deliberate, not a cancel: with no other answerer the tool reports `no user-questions answerer accepted the request`, which cannot be mistaken for a human choice.
+
+### Thinking intensity
+
+The effective level and its `Tab` hint sit at the composer's top right. Click the label to open the slider. The display stays static at every level, including `max`.
+
+- `Tab` on the session page cycles the levels of the **current model** (wrapping strongest → weakest); `Shift+Tab` steps backwards.
+- `Ctrl+E` opens a slider below the composer: `Tab` or `←`/`→` adjust and persist, `Esc` or `Ctrl+E` close it.
+- Levels come from the provider adapter (`ctx.llm.resolveModelInfo`), so a boolean-thinking model shows exactly its two ends, DeepSeek's `Off`/`High`/`Max` shows those three, and a full-range model shows every advertised level — never a blanket `none → max` scale.
+
+The choice is applied to the session's requests through the `agent/request` waterfall and stored in `agent-default-model.reasoningEffort`.
+
+### Session stats and the context meter
+
+The row above the composer is the **session stats strip**, the TUI's counterpart of the web chat's stats line: the same figures in the same order, separated by spaces:
+
+```
+▤ 1 turn · 2 steps LLM 1.3s · tools 1.2s TTFT avg 400ms · 20.0 tok/s cache 55% in 110 · out 30
+```
+
+- `turns` / `steps` count **closed steps** (`step/end`), so failed, cancelled, and max-tokens steps count too. `LLM` is `step/start` → assembled reply; `tools` pairs `tool/call` → `tool/result`.
+- `TTFT avg` is the per-step average time to first token; `tok/s` is decode throughput (first token → assembled reply over the reported output tokens).
+- `cache` is the prompt-side cache-hit share (cache reads over all billed input); `in` / `out` are the session's billed input and output tokens.
+- A narrow terminal drops trailing groups **whole** and marks the elision with `…` rather than cutting a figure in half; the window always carries the complete set.
+- A session with no closed step and no billed tokens hides the strip entirely and gives the row back to the transcript.
+
+The whole strip is a click target. Clicking it — or the context meter at the right end of the status row (`ctx ▓▓░░ 32K/128K 25%`), or typing `/stats` — opens the **session stats window**; click again, click elsewhere, or press `Esc` to close. The window breaks the same line into labelled rows (`usage` / `duration` / `speed` / `tokens` / `cache`) and adds the context-occupancy reading with its heuristic composition — system prompt, tools, and messages — matching the Web UI's ContextMeter dialog.
+
+Figures come from the same sources as the Web UI, projection-first with the plugin's own fold as the fallback: `tokenUsage`, `contextPressure`, and `contextBreakdown` are mounted by `dsh-base`'s token-meter row, while `sessionStats` is mounted only by the web app bundle — so the TUI folds the durable `step` / `chunk` / `message` / `tool` events by the same rules. A missing projection falls back for that figure alone, and a figure nobody can supply stays hidden instead of printing a zero.
+
+### The status rail
+
+In conversations from **140 columns**, a right-hand rail takes over the status figures, OpenCode-style: the session title pins to the top, scrollable sections fill the middle — `MODEL` (model, provider), `THINKING` (current level and its real range), `CONTEXT` (occupancy bar, tokens, billing, composition), `SESSION` (counts, durations and speed), `GOAL`, `SUBAGENTS` — and the running builds (`dsh x.y.z · tui a.b.c`) pin to the bottom. Sections with no data drop out whole. The home screen keeps its centered layout at every width.
+
+`GOAL` and `SUBAGENTS` read the harness's native surfaces: the `goal` projection registered by `dsh-goal` (objective, phase, rounds, blocker reason), and `ctx.subagents.listDescendants()` for the delegation tree rooted at the open session, refreshed on the scoped `subagent/start` / `subagent/end` edges. Both services are optional — a composition without them leaves those sections empty.
+
+When the sections outgrow the window a scrollbar appears in the rail's right edge; `Shift+↑` / `Shift+↓` or the wheel over the rail scrolls it. Clicking the `CONTEXT` section opens the session stats window (the seat the bottom-row meter vacates). Below 140 columns the rail disappears and the pre-rail layout — model on the status row, the stats strip above the composer — returns unchanged.
+
+### Settings
+
+`Ctrl+P` opens a settings menu over the same host settings namespaces as the Web UI, persisted through `ctx.settings`. Categories appear on the left in wide dialogs and across the top in narrow ones (`Tab` or click to switch):
+
+- **Main** — General (busy-Enter behaviour, permission preset), Sessions (new session, manage sessions), System (provider API hints, update-manager shortcut, settings file path), Developer (**Context details**).
+- **Developer → Context details** decides whether the transcript draws the harness's own plumbing: the runtime-context snapshot (`Current working directory…`, file policy, approval policy), the session's system prompt and the `system-reminder` notes. `show` (the default) keeps them as one collapsed box each — click the row or press `Enter` on it to expand — and `hide` drops them from the transcript without touching the session: the boxes stay in the log, so switching back brings them straight back.
+- **Model** — the default provider/model/reasoning choice, then one group per configured provider holding its API key, URL and model list, and finally **Add provider**. Pressing `Enter` on **Models** fetches the provider's advertised catalog (`ctx.llm.discoverModels`) and opens a checkbox window; pressing `Enter` on a listed model makes it the default route. Inside that window `e` edits the highlighted entry — id, context window, output tokens, input modalities — and `Del` removes it from the provider, while **Refresh catalog** asks the endpoint again and **Add model by id** covers a model it does not advertise. The first row is a whole-selection toggle (`selected/total`); a failed fetch prints the endpoint's own refusal — `answered 401; check the API key`, `could not reach …` — instead of an empty list, and a hand-declared route's first successful fetch arrives with every model already selected. **Add provider** offers the same two paths the Web UI's add card does: adopt a route the installed adapter already ships, or declare a custom endpoint (route id, wire protocol, endpoint, and at least one model). Its top row filters the catalog as you type; the declaring path can interrogate its endpoint with a key that has not been stored yet, so adding a gateway is one pass instead of save-then-return. **Remove provider** deletes the profile and its managed credential.
+- **MCP** — see [MCP servers](#mcp-servers).
+- **Update** — see [In-app updates](#in-app-updates).
+
+Providers whose profile resolves get a group — including a whole-section route such as DeepSeek, whose profile is the plugin entry's own Config and therefore always exists, so a fresh install can enter its key. A catalog route you have not adopted stays in the add picker instead, and a route authenticated by a sign-in (DeepSeek Account) shows that instead of a key field. **Default preset** is shown only when the profile mounts an agent-preset roster, because the choice list is that roster — and this plugin deliberately mounts none (see the compatibility note above), so on a stock `tui` profile the row is absent rather than empty. Where a roster *is* mounted, note that a TUI session composes process-wide from the base, so the stored default applies where a session is created from a preset. Web-UI-only options (`ui-theme` appearance, the Web UI's `locale`) are not shown because they have no effect in the TUI; the TUI's own **Language** row is a separate namespace (`tui-locale`) — see [Language](#language).
+
+### Language
+
+Every user-facing string the TUI draws is looked up in a catalog at paint time: the title screen, header, sidebar, transcript labels, tool rows, composer, status row and rail, settings chrome and values, help overlay, rewind picker, stats window, question and approval boxes, toasts, and the `/help` command descriptions. The language is one setting — **`Ctrl+P` → Main → Language** — with 17 choices plus `System`, labelled in their own script (`简体中文`, `日本語`, `Português (Brasil)`, `العربية`, …). Choosing one repaints immediately; nothing restarts. The choice is stored wherever the running dsh keeps settings — the profile's `cordis.patch.yml` as the `tui-app` row's `locale` field on dsh 0.2.0, or `$DSH_HOME/settings.yaml` as `tui-locale.preference` on 0.1.x — and `System` stores nothing at all, so a later change of OS language is followed.
+
+With `System` selected (the default) the boot resolves the language in this order, first hit wins:
+
+1. `DSH_TUI_LOCALE`
+2. `LANGUAGE`
+3. `LC_ALL` / `LC_MESSAGES` / `LANG`
+4. the OS locale (on Windows, the user's display language)
+5. `en`
+
+Values may be POSIX style (`de_DE.UTF-8`), BCP 47 (`pt-BR`), or a bare language (`zh`, `fr`); matching is case-insensitive, and an alias resolves to the nearest catalog it actually has (`zh`/`zh-Hans` → `zh-CN`, `zh-Hant`/`zh-HK` → `zh-TW`, `pt`/`pt-PT` → `pt-BR`, `in` → `id`). A language with no catalog — Norwegian, say — falls back to English rather than to a neighbour it does not resemble. `DSH_TUI_LOCALE=en` also pins the `--help` text, which is printed before the settings file is read.
+
+English is the source catalog: it defines the key set, every other locale must cover all of it (a test enforces parity in both directions), and any key a locale is missing falls back to English rather than showing a raw key. Plural families go through `Intl.PluralRules`, so Russian and Arabic get their full CLDR forms while English and Chinese use the two or one they have. Product and protocol tokens (`DeepSeek Harness`, `dsh`, `MCP`, `stdio`, `Ctrl+P`, `Tab`, `Esc`, `Enter`, `git`, `npm`, …) stay literal in every locale.
+
+Adding a language is one file: `lib/locales/<id>.js` exporting a flat `{ 'area.key': 'text' }` object, plus an entry in `LOCALES` in `lib/i18n.js`. `npm test` then checks its key coverage, placeholder parity, and plural forms against English.
+
+### MCP servers
+
+`Ctrl+P → MCP` is the TUI's own MCP page. Servers are mounted on the **current session's agent** through the host's MCP client, so the page shows live connection state once a session is open (on the title screen the configuration is still listed, just not connected).
+
+`Enter` on a server edits it, `Add MCP server` starts a new one, and `Delete` (or `Backspace`) on a server row asks y/n before removing the configuration and disconnecting. The form holds:
+
+| Field | Meaning |
+| --- | --- |
+| Name | The tool namespace: 1–32 letters, digits, `-` or `_`. Fixed while editing, because renaming a server is removing one and adding another. |
+| Type | `Local command` (a child process over stdio), `HTTP` (Streamable HTTP), or `SSE` (the legacy HTTP+SSE transport). |
+| Timeout (ms) | Per tool call or resource request; defaults to `30000`. |
+| Command / Arguments / Environment (JSON) | For a local command. Arguments split on whitespace and group with double quotes, or you can paste a JSON array. The environment is a JSON object whose values may be strings, numbers, or booleans. |
+| URL / Headers (JSON) | For `HTTP` and `SSE`. |
+| Scope | `User` (`$DSH_HOME/mcp.json`, every session) or `Path` (a `<path>/.dsh/mcp.json`, sessions whose working directory is inside `<path>`), followed by the `Path` row itself. |
+| Enabled | `off` keeps the configuration but does not connect. |
+
+`Save` writes the record and mounts it right away; a local command inherits the session's working directory.
+
+State rows read `● connected` (no readable tool list), `● N tools`, `… connecting`, `⚠ <reason>`, `○ disabled`, or `○ not connected`, and the tools one server registered are listed indented underneath it. Below the list, the `Config files` rows name every file that was read and whether it exists — the answer to "why is this server here".
+
+**Scope is a property of the file, not a field of the record.** The effective list for a session is the user file plus every `<dir>/.dsh/mcp.json` between the session's working directory and the filesystem root; a nearer file wins a duplicate name. Editing a server and switching its scope moves the record to the other file. Servers are plain JSON:
+
+```json
+{
+  "version": 1,
+  "servers": {
+    "github": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-github"],
+      "env": { "GITHUB_TOKEN": "…" },
+      "timeoutMs": 30000,
+      "enabled": true
+    }
+  }
+}
+```
+
+The TUI re-reads those files while the MCP page is open and remounts what changed, so a server edited in another window — or imported by the model through the bundled **`mcp-import` skill** — appears and connects without restarting the session. The skill ships with the plugin and teaches the model how to add, fix, disable, or remove a server for you.
+
+Environment values and headers are **plain text** in those files, and the page says so on its `Secrets` row: there is no credential vault here and no OAuth.
+
+**MCP is optional by design.** No server configured, a server that refuses to connect, a host whose MCP client is missing, or a config file that will not parse all cost exactly one `⚠` row — sessions, input, and every other feature keep working.
+
+**SSE.** The host's MCP client supports stdio and Streamable HTTP only, so the `SSE` type runs `bin/mcp-sse-bridge.mjs` — a zero-dependency stdio↔legacy-SSE proxy shipped with the plugin — as the child process. The host's tool bridge, reconnect policy, and per-call timeout then apply exactly as they do to a local command.
+
+### In-app updates
+
+`Ctrl+P → Update` shows the installed versions of `@deepseek-ai/dsh` and `dsh-oc-tui`, the latest npm dist-tag, and a status line that only ever targets **stable** releases:
+
+- `Update available → x.y.z` — a newer stable release exists.
+- `Up to date` — nothing to do.
+- `No stable release — pick from Versions` — the registry has no stable release yet; pick one manually.
+- `Install damaged — reinstall below` — the global dsh tree is in a mixed old/new state; reinstall it.
+
+`Enter` on a package's **Versions** row opens the full registry list (newest first, `[latest]`/`[next]`/other tags and `(installed)` colour-coded) where you can pick any version — including pre-releases. A picked version is **downloaded first**: the tarball streams into `$DSH_HOME/updates` with live byte progress, `Esc` cancels mid-flight, and the sha512 registry hash is checked before the file is kept. Applying it is a **restart**: after the y/n confirm the TUI spawns a detached applier, exits, and that child installs from the staged tarball, verifies the on-disk version, and relaunches dsh in the same terminal with the same arguments (`--profile tui --resume …` included) and working directory.
+
+Version rows are tagged `[cached]` when that tarball is already on disk — a version you downloaded before (or rolled back from) needs no new download — and `[staged]` for the version waiting to be applied. A staged install also shows up on the Update tab as **Restart to apply x.y.z** (one `Enter`) and **Discard downloaded x.y.z**, and its state survives a crash: the row is only offered while the staged tarball actually exists. `Check now` re-reads the registry; `Startup check` toggles the silent boot-time stable-release check.
+
+<details>
+<summary><strong>Why an update never installs while the TUI runs</strong></summary>
+
+Updating a package that a live `dsh` process has loaded can *silently corrupt* it: on Windows the process holds memory-mapped native DLLs, npm's directory replace fails, and the result is an old/new hybrid tree — while npm still exits 0. The crash of 2026-09-04 happened exactly that way. Migrating the whole flow to "download, then restart to apply" removed the window instead of narrowing it, on every platform:
+
+1. **Nothing is installed until this process is gone.** The download is only a file; the applier polls this pid, and the TUI refuses to start the restart while any *other* dsh process is alive.
+2. **The on-disk version decides success**, not npm's exit code. A mismatch is reported as `Install damaged — reinstall below` with repair instructions, never as a bogus success.
+3. **The staged tarball is kept**, so a rollback to any downloaded version is a verified cache hit through the same code path as an update.
+
+The applier writes the outcome to `$DSH_HOME/tui-dsh-install.json`, which the Update page reads and drains on the next visit — so the result of an interrupted install is still reported.
+</details>
+
+## How it works
+
+- The plugin is a Cordis function plugin loaded by the `tui` profile. `lib/startup.js` parses the app's flags and provides the `tuiStartup` service; `lib/index.js` owns the UI loop.
+- `lib/term.js` is a zero-dependency terminal engine: raw mode, alternate screen, a diffing cell buffer, and a key decoder (truecolor ANSI, CJK-aware widths). It parks the hidden terminal cursor at the input caret so the OS IME anchors its composition window inside the composer, and it understands both SGR and legacy X10 mouse encodings so wheel and click bytes can never leak into the input text. The cell buffer is also the single chokepoint where every painted string is sanitized: C0, DEL and C1 characters are replaced with a visible `\uFFFD`, so a tool name, a path, a title or a `@dsh-std` request's action can never smuggle an escape sequence into the output stream. The width-preserving placeholder is deliberate — dropping the character instead would silently change layout, whereas a visible one makes the injection obvious.
+- `lib/ui.js` is the responsive view model and renderer (DeepSeek blue-white theme, session rail, transcript, multiline composer, command suggestions, telemetry footer). Transcript lines are cached per block, only the visible window is materialised each frame, streaming paints are coalesced, and the live block re-renders on a short throttle — so render cost stays bounded as history grows. Thinking collapses to keep the transcript readable, and running tools and thinking blocks animate with flowing spinners.
+- `lib/metrics.js` folds durable step/chunk/message events into token, TTFT, throughput, and cache-hit metrics.
+- `lib/interrupt.js` owns the clear/cancel/double-exit state machine used by stdin and `SIGINT`.
+- `lib/markdown.js` renders model output (headings, lists, quotes, code, inline spans) to styled lines.
+- `lib/updates.js` isolates every npm/pnpm interaction for the Update tab — registry queries, dependency-free semver comparison, dsh install detection, and installs — all through `child_process.spawn`, never `spawnSync`.
+- Agents are created and resumed through `ctx.agents`, the transcript is rebuilt from the session's durable log and fed live by `session/event` (including `assistant/chunk`), model defaults come from `ctx.agentDefaultModel`, and approvals answer the `approval/request` waterfall inline.
+- `ask_user_question` is answered over the `user-questions/request` waterfall: a scoped Cordis waterfall where the modal either returns an answer or delegates with `next()`. An aborted request rejects so the service reports its own `ASK_ABORTED`; requests addressed to another agent are delegated untouched.
+
+## Graphics rendering
+
+Images and mermaid diagrams render as real pixels. On boot the TUI probes the terminal itself — DA1 attributes, an XTVERSION name query, a kitty graphics query, and a cell-size query — and every probe is an escape sequence the *client* terminal answers, so detection works unchanged over SSH where environment variables do not propagate.
+
+| Terminal | Protocol used |
+| --- | --- |
+| kitty, Ghostty | kitty graphics (transmitted once per image, moved by reference — free on scroll) |
+| WezTerm | kitty graphics, or iTerm2 inline images |
+| iTerm2, Konsole, mintty | iTerm2 inline images / sixel |
+| Windows Terminal ≥ 1.22 | sixel |
+| GNOME Terminal, older xterm, anything else | truecolor half-block preview (▀, every font has the glyphs) |
+
+- **Sources.** A pasted image (bytes are already in hand), a stored attachment on resume/replay (read back through the attachment store), a `data:` URL, and a standalone markdown image (`![alt](https://…)`), plus tool-result images such as screenshots.
+- **Budgets.** Images scale to fit the transcript width and a row cap (Settings → Graphics → Image height cap, default 20 rows); GIFs render their first frame.
+- **Mermaid.** A ` ```mermaid ` fence draws as **native box-drawing art** whenever the grammar is one the built-in engine knows (flowchart, sequence, class, state, ER, pie, mindmap, timeline, gitGraph) — text in the transcript, sharp at any font size, selectable and searchable, with emoji and CJK labels measured the way the terminal draws them. Only a grammar the engine does not draw falls back to the provider chain: local `mmdc` (mermaid-cli) if it is on `PATH`, otherwise the mermaid.ink service (10 s timeout, disk-cached) — which sends the diagram text to a third party, hence the setting. A diagram wider than the pane reports the width it needs and shows its source instead of a raster. `Settings → Graphics → Mermaid rendering` offers `auto` / `local` / `off`; `off` keeps every diagram as its highlighted source, and every failure degrades to source, never a broken frame.
+- **Settings.** `Graphics rendering` (`auto`/`off`), `No-protocol fallback` (`halfblock`/`chip`), `Image height cap (rows)`, `Mermaid rendering` (`auto`/`local`/`off`). Changes apply the moment they are saved.
+- **Dependencies.** Rendering is pure npm: `sharp` decodes and scales (prebuilt binaries on all three platforms), [`lovely-mermaid`](https://www.npmjs.com/package/lovely-mermaid) lays out mermaid diagrams as terminal text, and the kitty/iTerm2/sixel encoders are part of the plugin. No external binaries are required; `mmdc` is optional.
+
+## @dsh-std interop
+
+The package carries a [`dsh-plugin.json`](../dsh-plugin.json) manifest and a facet at `lib/facet.js`, so a `@dsh-std` host can discover it without running any code. **What ships today is that static manifest and the preflight surface; the runtime protocol support is currently gated off by an upstream limitation.** The plugin is designed as a **host and Presentation provider** in that ecosystem, not a protocol consumer — its facet is wired to publish `presentation.dsh/v1alpha1` `UserInteraction` / `Notification` / `CopyText` and `commands.dsh/v1alpha1` `CommandRuntime` for other components to drive. Its one `requires.contracts` entry is the `commands.dsh/v1alpha1` `Command` resource, declared **`optional: true`**. The entry is retained for a future consumer and is inert today — nothing calls `protocols.client(...)`, and its own command line is parsed from the cordis `ctx.commands` service, so the TUI behaves identically whether or not a Command provider exists. An unsatisfiable non-optional requirement would be a hard activation failure rather than a warning, and the `optional` flag is what keeps the declaration honest about that. But a Community v0.15 manifest **cannot declare protocol supports**, and `@dsh-std/lifecycle`'s `implement` — which *is* `stageProtocol` — refuses to stage a support the facet has not declared, so the facet stages **nothing**. The protocol shims are written and test-covered; they go live unchanged once upstream closes the gap. See [docs/dsh-std-接入说明.md](dsh-std-接入说明.md#阻断性发现本插件当前不发布任何协议-support) for the layer-by-layer evidence.
+
+**The facet does not own the TUI's lifecycle, and the double activation is avoided by design.** `@dsh-std/adapter-dsh`'s `mountProfileComponents` mounts the facet of every `dsh-plugin.json` it finds in a profile's `dependencies`, without checking whether the cordis bundle rows already loaded that component — and this plugin *is* a profile dependency that `cordis.patch.yml` also activates. Since the TUI seizes the terminal (raw mode, alternate screen, mouse tracking), a manifest alone would start it twice. The facet is therefore an **interop shell**: when it does stage protocol support, it forwards protocol calls through `lib/bridge.js` to whichever TUI instance is live, and it reports `{ state: 'degraded' }` when none is — or when it staged nothing at all. A `dsh-plugin.json` whose facet never starts the TUI is working as intended, not broken.
+
+> 中文说明：[docs/dsh-std-接入说明.md](dsh-std-接入说明.md) — 本插件在 `@dsh-std` 生态里扮演 **Host 与 Presentation 提供方**；facet 只是协议外壳，**不拥有 TUI 的生命周期**，双激活已由设计规避。**但当前上游下它一条协议都不发布**：Community v0.15 清单无法声明 supports，而 lifecycle 要求先声明才能暂存，因此 Phase B（运行时互操作）休眠、Phase A（静态清单与预检）可交付——见该文档开头的「阻断性发现」。该文档还记录了清单字段、pin 的 `rc` 版本、`lib/bridge.js` 的契约、adapter 的 staging 契约、明确不实现的协议，以及评审确认的已知行为。
+
+## Development
+
+AI agents working in this checkout should read [AGENTS.md](https://github.com/rayafriandion/dsh-oc-tui/blob/main/AGENTS.md) first — it
+records the build/install loop as a rule rather than a suggestion.
+
+```sh
+npm run check   # node --check over lib/, bin/
+npm test        # standalone smoke tests (no dsh needed)
+```
+
+**The install is a build, so edit → build → install.** The profile contains a *tarball* copy of the plugin, and the profile's HMR root is the profile directory, not the plugin directory — editing this checkout changes nothing until you repack and reinstall:
+
+```sh
+npm pack                                        # -> dsh-oc-tui-<version>.tgz
+dsh plugin --profile tui remove -w dsh-oc-tui   # detach the old copy FIRST
+Remove-Item .\*.tgz                             # then drop the stale tarball
+npm pack                                        # repack the current tree
+Copy-Item .\dsh-oc-tui-<version>.tgz $env:USERPROFILE\.dsh\profiles\tui\
+dsh plugin --profile tui add -w .\dsh-oc-tui-<version>.tgz
+Remove-Item $env:USERPROFILE\.dsh\profiles\tui\dsh-oc-tui-<version>.tgz
+```
+
+Three things that will bite you:
+
+- **Detach before deleting.** pnpm resolves the profile's existing `file:` dependency while adding, so a dependency pointing at a deleted tarball aborts the whole install with `ENOENT`.
+- **The tarball has to be reachable from the profile directory while you add it.** dsh hands package specs to pnpm with `cwd` pinned to the profile directory, and pnpm 9.15.9 then looks for the tarball *by name inside the profile* rather than at the absolute path it was given: the `add` fails with `ENOENT: no such file or directory, open '…\.dsh\profiles\tui\dsh-oc-tui-<version>.tgz'`. Copy it in first; dsh writes the absolute path into the profile manifest, so the copy comes straight back out afterwards.
+- **Remove before adding, even at the same version.** dsh appends a bundle to `dsh.profile.bundles` only for dependencies that were *not* already installed, so adding over an existing copy installs the files and silently skips the bundle row — the profile then boots dsh-base with no TUI.
+
+Verify the swap actually landed — the version string proves nothing:
+
+```powershell
+foreach ($rel in @('lib\index.js','lib\ui.js','lib\util.js','lib\term.js','lib\metrics.js',
+                   'lib\interrupt.js','lib\web-settings.js','lib\updates.js','lib\markdown.js',
+                   'lib\startup.js','bin\dsh-oc-tui.js','cordis.patch.yml')) {
+  $a = (Get-FileHash ".\$rel").Hash
+  $b = (Get-FileHash "$env:USERPROFILE\.dsh\profiles\tui\node_modules\dsh-oc-tui\$rel").Hash
+  if ($a -ne $b) { "DIFFERS: $rel" }
+}
+```
+
+The reverse failure is just as silent and worse: current files with no `dsh-oc-tui` row in `dsh.profile.bundles` means dsh-base boots with no TUI. Confirm the layer composes:
+
+```sh
+dsh --profile tui --dump-config | grep -A2 tui-app
+```
+
+Then boot it for real. Reaching the title screen is not enough — the session-open path is where host API breaks surface, so send a message. Test `--resume` separately, because it is an apply-time path that can lose a startup race the post-boot paths win.
+
+For a zero-install bootstrap that skips packaging entirely, create the profile once and point its patch at this checkout:
+
+```sh
+dsh --profile tui --dump-config   # initializes the base profile once
+```
+
+```yaml
+# $DSH_HOME/profiles/tui/cordis.patch.yml
+- insert:
+    - id: tui-startup
+      name: 'file:///path/to/dsh-oc-tui/lib/startup.js'
+    - id: tui-app
+      name: 'file:///path/to/dsh-oc-tui/lib/index.js'
+      config:
+        sidebar: true
+        showReasoning: true
+```
+
+The plugin's dsh imports resolve through the shared `$DSH_HOME/profiles/node_modules` fallback that dsh maintains, so nothing has to be installed into the plugin directory.
+
+## Troubleshooting
+
+| Symptom | Cause and fix |
+| --- | --- |
+| `pnpm failed in profile directory` / `ERR_PNPM_ADDING_TO_ROOT` | The profile is a pnpm workspace root; add `-w` to the `add`/`remove` command. |
+| `ENOENT: … dsh-oc-tui-<v>.tgz` during install | The profile still references a tarball you deleted. `dsh plugin --profile tui remove -w dsh-oc-tui`, then add again. |
+| `pnpm not found on PATH` | Install pnpm (`npm install -g pnpm`) and retry. |
+| `--dump-config` has no TUI layer | The install did not complete, or the package name is misspelled. Re-run the `add` and check `dsh.profile.bundles`. |
+| Exits immediately / no UI | stdin and stdout must both be a TTY — do not pipe or redirect. Then verify the model route and credentials exist. |
+| `--resume` or Manage sessions unavailable | Both need the shared `sessionQuery` service; keep `@deepseek-ai/dsh-base` first in `dsh.profile.bundles`. |
+| `no agent factory registered` on `--resume` | A startup race with the agent-loop row; current builds retry it. On an older build, run `/resume <id>` after boot instead. |
+| Loader errors after updating dsh (`State`, `./internal`) | The global dsh install is a mixed old/new tree. Close every dsh process and reinstall: `npm install -g @deepseek-ai/dsh@<version>`. |
+| `incompatible with dsh <version>` wall at every boot | The host is outside the declared `engines.dsh` range. Update this plugin, hold dsh at a supported version, or grant an exact-version exemption (the refusal prints the command): `dsh plugin --profile tui allow-version dsh-oc-tui@<version> --dsh-version <version> --accept-risk`. |
+| Source edits have no effect | The installed copy is a tarball; repack and reinstall (see [Development](#development)). |
+
+More detail, in Chinese: [docs/用户手册.md](用户手册.md).
+
+## Known limitations
+
+- IME composition is not exposed by the zero-dependency terminal engine yet. Pasted images are: a bracketed paste of raw image bytes, a `data:image/...;base64,...` URL, a local image path, or an image URL — each becomes an attachment and renders in the transcript (see [Graphics rendering](#graphics-rendering)); pasting text nothing recognizes asks the terminal for its clipboard (OSC 52).
+- The plugin does not hot-reload: the profile's HMR root is the profile directory, so a running TUI keeps the copy it booted with.
+- `dsh tui` as a bare subcommand needs a shell alias — the stock launcher hardcodes only `web` and `plugin`.
+- Harness slash commands need a live session; on the title screen the TUI tells you to start a session first.
+- The git branch switcher needs `git` on `PATH` and a git worktree as the workspace; anywhere else it reports that and changes nothing. It is an empty-page affordance: with a session open, `Ctrl+G` and `/branch` only point back at the empty page.
+- Deferring a question with `Esc` does not cancel the tool call — it delegates, and with no other answerer the tool call fails. Per-question skip (as the Web UI composer offers) is not implemented.
+- `--resume`, Settings → Manage sessions, the context meter, and the stats strip depend on services mounted by `@deepseek-ai/dsh-base` (`sessionQuery`, `sessionProjections`); a hand-built profile must provide them. The `sessionStats` projection is a web-app-layer row, so the TUI folds those figures from the session log itself when no profile mounts it.
+- An update restart only waits for the TUI that scheduled it: the "no other dsh process" check runs *before* you confirm, so a `dsh web` window opened afterwards can still overlap the install. Close other dsh windows first.
+- Two `@dsh-std` presentation surfaces have no caller today, because the runtime protocol support is gated off (see [@dsh-std interop](#dsh-std-interop)). A standard `secret-input` request would open a masked prompt with `minLength`/`maxLength` bounds, and a standard `ApprovalRequest` is the only thing that populates the approval box's `Origin` / `Risk` / `Details` rows. Both paths are written and integration-tested; neither can be reached from a normal `dsh --profile tui` session, which is why the harness-shaped approval box shows only the action and the summary.
+- Graphics: an image whose top rows are scrolled out of the transcript window shows as blank placeholder rows until it fits fully again (kitty placements cannot anchor off-screen); GIFs animate their first frame only; sixel/iTerm2 payloads are re-emitted when an image's row moves, which is fine locally and throttled on slow SSH links.
+
+## Layout
+
+```
+lib/index.js         plugin entry: agents, events, input, commands, approvals, user questions
+lib/startup.js       command-line provider (tuiStartup service)
+lib/term.js          terminal engine (raw mode, screen, key decoding, image slab emission)
+lib/caps.js          terminal capability probing (DA1, XTVERSION, kitty graphics, cell size)
+lib/image.js         image pipeline (decode/scale + halfblock, sixel, kitty, iTerm2 encoders)
+lib/mermaid.js       mermaid provider chain (mmdc → mermaid.ink → highlighted fallback), tried only for grammars the built-in engine cannot draw
+lib/mermaid-ascii.js native terminal art for mermaid fences (box-drawing layout, tried before the image path)
+lib/ui.js            responsive view model + renderer (conversation panels, tool rows, question modal)
+lib/splash-opencode.js title-screen art (OpenCode-style layout, DeepSeek gradient mark)
+lib/metrics.js       whole-session stats + token usage fold (web stats strip / tokenUsage port)
+lib/rewind.js        rewind picker: conversation fork from the event log plus fenced file restore
+lib/git-branch.js    git branch switcher: local/remote listing, checkout, and ff-only pull (git CLI, worktree-fenced)
+lib/interrupt.js     Ctrl+C lifecycle state
+lib/web-settings.js  shared WebUI settings projection (incl. the tui-graphics namespace)
+lib/providers.js     provider directory split, the add-provider draft and its write
+lib/updates.js       in-app update manager (npm registry, download + staging, install verification)
+lib/markdown.js      markdown-it token stream -> styled lines (tables, hljs, links)
+lib/util.js          text/display helpers
+lib/bridge.js        live-TUI registry the @dsh-std facet forwards through
+lib/facet.js         @dsh-std facet entry (interop shell; never starts the TUI)
+lib/std/             @dsh-std protocol adapters (adapt, presentation, commands, command-list)
+bin/dsh-oc-tui.js    convenience launcher for `dsh --profile tui`
+bin/apply-update.cjs detached applier: waits for the TUI to exit, installs the staged tarball, relaunches dsh
+install.sh           one-command installer (Linux/macOS)
+install.ps1          one-command installer (Windows)
+dsh-plugin.json      @dsh-std component manifest (discovery + preflight only)
+cordis.patch.yml     bundle patch layer (TUI rows, ask-user tool; no agent-preset row, with the reason in a comment)
+docs/用户手册.md       Chinese user manual
+docs/dsh-std-接入说明.md  @dsh-std interop scope and constraints (Chinese)
+tests/smoke.test.mjs standalone smoke tests
+```
+
+## License
+
+[LGPL-3.0-or-later](../LICENSE).
+
+**Third-party.** [`lovely-mermaid`](https://www.npmjs.com/package/lovely-mermaid) 0.3.3 (Apache-2.0, © Alexey Zaytsev / ccch1mneyyy) lays out mermaid diagrams as terminal text; its license ships in its package, and its source is at [github.com/ccch1mneyyy/lovely-mermaid](https://github.com/ccch1mneyyy/lovely-mermaid).

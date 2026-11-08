@@ -16,9 +16,10 @@
 //
 // So this file mounts the REAL `lib/index.js` `apply()` through a REAL cordis
 // Context, registers the REAL `@deepseek-ai/dsh-user-questions`
-// UserQuestionService (the same service the `ask_user_question` tool calls),
-// and feeds raw ESC bytes into a headless TTY that lib/term.js consumes exactly
-// as it consumes a terminal.
+// UserQuestionService, and feeds raw ESC bytes into a headless TTY that
+// lib/term.js consumes exactly as it consumes a terminal. The pinned RC
+// service is bridged to Cordis's waterfall below, matching the dispatch used
+// by the newer host service.
 //
 // It was checked against the pre-fix code: with `askQuestions(req)` and a free
 // `next`, the run dies with
@@ -34,12 +35,17 @@
 // override a user has, and the plugin reads it when it applies.
 process.env.DSH_TUI_LOCALE = "en"
 
+// This suite boots the interface, not the host gate: pin the version verdict so a
+// machine running a dsh this build has not been run against still runs the tests.
+process.env.DSH_TUI_IGNORE_DSH_VERSION = "1"
+
 import { EventEmitter } from "node:events"
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { Context, Service } from "@deepseek-ai/cordis"
-import { UserQuestionService } from "@deepseek-ai/dsh-user-questions"
+import { UserQuestionError, UserQuestionService } from "@deepseek-ai/dsh-user-questions"
+import { scopeTarget } from "@deepseek-ai/dsh-scope"
 import { Terminal } from "../lib/term.js"
 
 // The plugin reads the harness home for its session store and settings. Point
@@ -142,7 +148,20 @@ new AgentsStub(ctx)
 new CommandsStub(ctx)
 new SessionPersistenceStub(ctx)
 new TuiStartupStub(ctx)
-new UserQuestionService(ctx)
+const userQuestions = new UserQuestionService(ctx)
+// The pinned RC service validates requests but predates the host's answerer
+// waterfall. Adapt its provider to the real Cordis dispatch so this test also
+// works with the dependency used by a clean install.
+if (typeof userQuestions.registerProvider === "function") {
+  userQuestions.registerProvider({
+    ask(request) {
+      const noAnswerer = () => Promise.reject(new UserQuestionError("no user-questions answerer accepted the request", "NO_PROVIDER"))
+      return request.agent
+        ? ctx.waterfall(scopeTarget(request.agent, request.agent), "user-questions/request", request, noAnswerer)
+        : ctx.waterfall("user-questions/request", request, noAnswerer)
+    },
+  })
+}
 
 const tui = await import("../lib/index.js")
 await ctx.plugin({ apply: tui.apply, inject: tui.inject, name: tui.name }, {})

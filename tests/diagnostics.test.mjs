@@ -35,6 +35,10 @@ term.write('\x1b[2J')
 ok('host writes were counted', capture.count === 3, 'count=' + capture.count)
 ok('nothing leaked onto the paint channel', painted.length === 1 && painted[0] === '\x1b[2J', JSON.stringify(painted))
 ok('the first write notified once', firstNotifications === 1)
+// The log is written in batches (a synchronous append per host write stalled the
+// frame loop while MCP servers were streaming their startup output), so the file
+// is read after an explicit flush rather than the moment the write returns.
+capture.flush()
 ok('the log file has the warnings', fs.readFileSync(logPath, 'utf8').includes('model refused by the listing'))
 ok('the log file records the stream', /\[stderr\]/.test(fs.readFileSync(logPath, 'utf8')))
 ok('stdout is recorded as stdout', /\[stdout\] a stray stdout line/.test(fs.readFileSync(logPath, 'utf8')))

@@ -9,6 +9,9 @@ import { InterruptState } from "../lib/interrupt.js"
 import { SessionMetrics, cacheHitPercent, mergeSessionStats } from "../lib/metrics.js"
 import { SETTINGS_MENU, loadModelSettings, loadProviderModels, loadWebSettings, saveWebSetting } from "../lib/web-settings.js"
 import { DSH_PACKAGE, TUI_PACKAGE, parseRegistryView, isPrerelease, coreSegments, latestStable, updateStatus, compareVersions, buildUpdateItems, buildVersionItems, resolveActiveProfile, stderrSummary, dshLockEntries, installResultFrom, restartPlan, restartSpec, restartPlanPath, writeRestartPlan, applierPath, tarballFileName, tarballCachePath, formatBytes, formatDownloadProgress, checkIntegrity, readStagedInstall, writeStagedInstall, clearStagedInstall, installMarkerPath, readInstallMarker, writeInstallMarker } from "../lib/updates.js"
+import { setLocale } from "../lib/i18n.js"
+import { legacyRouteOverrides, recordSelection, recordsSelections } from "../lib/model-route.js"
+import { dshBootGate, dshSupport, evaluateDshSupport, parseDshRange, runningDshVersion, satisfiesDshRange } from "../lib/dsh-version.js"
 import { renderMarkdown } from "../lib/markdown.js"
 import { displayWidth, wrapText, roughTokens, truncateWidth, shortenPath, contentText, timeString, toolSummary, detectImageMediaType, imageMediaTypeFromName, decodeDataUrl, localImagePath, runeWidth, userContentBlocks } from "../lib/util.js"
 
@@ -19,6 +22,119 @@ const eq = (name, actual, expected) => {
   else { console.log("FAIL " + name + "  got " + a + "  want " + e); failed++ }
 }
 const ok = (name, cond) => cond ? console.log("ok   " + name) : (console.log("FAIL " + name), failed++)
+
+// ---- dsh version gate ----------------------------------------------------
+// The plugin declares a hard range (`engines.dsh`, which dsh's own preflight also
+// enforces) and the versions this build was actually run against. Anything
+// outside the run set refuses to start: 0.2.2-rc.1 sat inside the old range and
+// still broke every model switch, so "inside the range" was never the same claim
+// as "works".
+eq("a listed version satisfies the range", satisfiesDshRange("0.2.1-rc.2", ">=0.1.1-rc.2 <0.3.0-0"), true)
+eq("the exact floor is inside", satisfiesDshRange("0.1.1-rc.2", ">=0.1.1-rc.2 <0.3.0-0"), true)
+eq("below the floor is outside", satisfiesDshRange("0.1.1-rc.1", ">=0.1.1-rc.2 <0.3.0-0"), false)
+eq("the next line is outside", satisfiesDshRange("0.3.0-rc.1", ">=0.1.1-rc.2 <0.3.0-0"), false)
+eq("the upper bound is exclusive", satisfiesDshRange("0.3.0-0", ">=0.1.1-rc.2 <0.3.0-0"), false)
+eq("alternatives are ORed", satisfiesDshRange("0.2.0", ">=0.3.0 || =0.2.0"), true)
+eq("a leading v is normalized", satisfiesDshRange("v0.2.1", "=0.2.1"), true)
+eq("a range it does not understand is unknown, not false", satisfiesDshRange("0.2.0", "^0.2"), null)
+eq("a version it does not understand is unknown", satisfiesDshRange("nonsense", ">=0.1.0"), null)
+eq("an empty range is unparseable", parseDshRange(""), null)
+{
+  const support = { range: ">=0.1.0 <0.3.0-0", recommended: "0.2.2-rc.1", tested: ["0.2.1-rc.2", "0.2.2-rc.1"] }
+  eq("a verified version passes", evaluateDshSupport("0.2.2-rc.1", support).verdict, "ok")
+  eq("an unrun version inside the range is unverified", evaluateDshSupport("0.2.9", support).verdict, "unverified")
+  eq("a version outside the range is unsupported", evaluateDshSupport("0.3.0", support).verdict, "unsupported")
+  eq("an unreadable version is unknown", evaluateDshSupport(null, support).verdict, "unknown")
+  eq("an empty run set falls back to the range", evaluateDshSupport("0.2.9", { ...support, tested: [] }).verdict, "ok")
+  eq("the gate lets a verified host through",
+    dshBootGate({ env: {}, support, probe: () => ({ version: "0.2.2-rc.1", source: "test" }) }), null)
+  eq("the gate lets an unreadable host through",
+    dshBootGate({ env: {}, support, probe: () => ({ version: null, source: "unknown" }) }), null)
+  const refused = dshBootGate({ env: {}, support, probe: () => ({ version: "0.3.0", source: "test" }) })
+  eq("the gate refuses an unsupported host", refused?.verdict, "unsupported")
+  eq("the refusal carries what the page prints",
+    [refused?.version, refused?.recommended, refused?.range], ["0.3.0", "0.2.2-rc.1", ">=0.1.0 <0.3.0-0"])
+  eq("the gate refuses an in-range version this build never ran",
+    dshBootGate({ env: {}, support, probe: () => ({ version: "0.2.9", source: "test" }) })?.verdict, "unverified")
+  eq("the escape hatch bypasses the gate",
+    dshBootGate({ env: { DSH_TUI_IGNORE_DSH_VERSION: "1" }, support, probe: () => ({ version: "0.3.0" }) }), null)
+  eq("an explicit 0 does not bypass it",
+    dshBootGate({ env: { DSH_TUI_IGNORE_DSH_VERSION: "0" }, support, probe: () => ({ version: "0.3.0" }) })?.verdict, "unsupported")
+}
+{
+  const manifest = {
+    engines: { dsh: ">=0.1.1-rc.2 <0.3.0-0" },
+    dshSupport: { recommended: "0.2.2-rc.1", tested: ["0.2.1-rc.2", "0.2.2-rc.1"] },
+  }
+  eq("support is read off the manifest", dshSupport(manifest), {
+    range: ">=0.1.1-rc.2 <0.3.0-0", recommended: "0.2.2-rc.1", tested: ["0.2.1-rc.2", "0.2.2-rc.1"],
+  })
+  const real = dshSupport()
+  ok("this build declares a range and a run set", real.range !== "" && real.tested.length > 0)
+  ok("the recommended version is one of the verified ones", real.tested.includes(real.recommended))
+  ok("every verified version is inside the declared range",
+    real.tested.every((version) => satisfiesDshRange(version, real.range) === true))
+  eq("the recommended version is accepted by this build's own gate",
+    evaluateDshSupport(real.recommended, real).verdict, "ok")
+}
+{
+  const resolveWith = (specs) => (entry, spec) => (spec in specs ? { version: specs[spec] } : null)
+  eq("the runtime version comes from app-boot first",
+    runningDshVersion({ entry: "dsh", resolve: resolveWith({ "@deepseek-ai/dsh-app-boot/package.json": "0.2.2-rc.1", "@deepseek-ai/dsh/package.json": "0.1.0" }), detect: () => ({ found: false }) }),
+    { version: "0.2.2-rc.1", source: "@deepseek-ai/dsh-app-boot/package.json" })
+  eq("it falls back to the CLI package",
+    runningDshVersion({ entry: "dsh", resolve: resolveWith({ "@deepseek-ai/dsh/package.json": "0.2.1-rc.2" }), detect: () => ({ found: false }) }),
+    { version: "0.2.1-rc.2", source: "@deepseek-ai/dsh/package.json" })
+  eq("then to the dsh on PATH",
+    runningDshVersion({ entry: "", resolve: () => null, detect: () => ({ found: true, version: "0.2.0-rc.2" }) }),
+    { version: "0.2.0-rc.2", source: "path" })
+  eq("an unreadable host is unknown, not an error",
+    runningDshVersion({ entry: "", resolve: () => null, detect: () => ({ found: false }) }),
+    { version: null, source: "unknown" })
+  eq("a throwing PATH probe is still unknown",
+    runningDshVersion({ entry: "", resolve: () => null, detect: () => { throw new Error("no PATH") } }),
+    { version: null, source: "unknown" })
+}
+
+// ---- model route: two host generations -----------------------------------
+// dsh 0.2.2 fixes a step's route before prompt assembly and its `agent/request`
+// waterfall throws when a listener proposes another one, so the same choice has
+// to be recorded through `agent.model.select()` there. 0.2.1 has no
+// `agent.model` at all and can only be steered through the waterfall; one build
+// serves both, picked by feature detection on the live agent.
+eq("a 0.2.1 agent has no selection of its own", recordsSelections({ id: "a" }), false)
+eq("a 0.2.2 agent is recognised by agent.model.select",
+  recordsSelections({ id: "a", model: { select() {}, current() {} } }), true)
+// The waterfall only speaks when it has something to add: a config that already
+// names a route and no TUI preference leaves it untouched (this is the pass a
+// 0.2.2 host relies on, since its listener returns before calling this).
+eq("an unset preference adds nothing",
+  legacyRouteOverrides({ provider: "p", model: "m" }, {}, {}, undefined), null)
+eq("the waterfall overlays the TUI choice on 0.2.1",
+  legacyRouteOverrides({ provider: "p", model: "m" }, { provider: "q" }, {}, "high"),
+  { provider: "q", reasoningEffort: "high" })
+eq("the waterfall fills a route the loop left empty",
+  legacyRouteOverrides({}, {}, { provider: "p", model: "m" }, undefined),
+  { provider: "p", model: "m" })
+{
+  const written = []
+  const agent = { model: { current: () => ({ provider: "old", model: "old-m" }), select: (s) => written.push(s) } }
+  eq("a route change records a complete pair",
+    recordSelection(agent, { model: "new-m" }, { provider: "view-p", model: "view-m" }),
+    { provider: "old", model: "new-m" })
+  eq("an effort change carries the level",
+    recordSelection(agent, {}, { provider: "view-p", model: "view-m" }, { withEffort: true, effort: "max" }),
+    { provider: "old", model: "old-m", reasoningEffort: "max" })
+  eq("a model switch drops a stale effort",
+    recordSelection(agent, {}, { provider: "view-p", model: "view-m" }, { effort: "max" }),
+    { provider: "old", model: "old-m" })
+  eq("every record reached the agent", written.length, 3)
+  eq("a rejected selection is swallowed",
+    recordSelection({ model: { select() { throw new Error("no route") }, current: () => ({}) } }, {}, { provider: "p", model: "m" }), null)
+  eq("an incomplete route is never recorded",
+    recordSelection({ model: { select() { throw new Error("should not run") }, current: () => ({}) } }, {}, {}), null)
+  eq("a 0.2.1 agent records nothing", recordSelection({ id: "a" }, {}, { provider: "p", model: "m" }), null)
+}
 
 // ---- util ----
 eq("displayWidth CJK", displayWidth("中文a"), 5)
@@ -119,6 +235,9 @@ eq("CJK printable", decodeKey(Buffer.from("中", "utf8")), { key: { name: "中",
 eq("Shift+Enter CSI-u", decodeKey(Buffer.from("\x1b[13;2u")), { key: { name: "enter", shift: true }, consumed: 7 })
 eq("Ctrl+Enter CSI-u", decodeKey(Buffer.from("\x1b[13;5u")), { key: { name: "enter", ctrl: true }, consumed: 7 })
 eq("Ctrl+Enter LF", decodeKey(Buffer.from([0x0a])), { key: { name: "enter", ctrl: true }, consumed: 1 })
+eq("Alt+Enter CSI-u", decodeKey(Buffer.from("\x1b[13;3u")), { key: { name: "enter", alt: true }, consumed: 7 })
+eq("Ctrl+Enter modifyOtherKeys", decodeKey(Buffer.from("\x1b[27;5;13~")), { key: { name: "enter", ctrl: true }, consumed: 10 })
+eq("Shift+Enter modifyOtherKeys", decodeKey(Buffer.from("\x1b[27;2;13~")), { key: { name: "enter", shift: true }, consumed: 10 })
 eq("Alt+Enter legacy", decodeKey(Buffer.from([0x1b, 0x0d])), { key: { name: "enter", shift: true }, consumed: 2 })
 eq("Ctrl+comma CSI-u", decodeKey(Buffer.from("\x1b[44;5u")), { key: { name: ",", ctrl: true }, consumed: 7 })
 eq("mouse left down", decodeKey(Buffer.from("\x1b[<0;12;7M")), { key: { name: "mouse", mouse: { x: 11, y: 6, button: "left", action: "down", shift: false, alt: false, ctrl: false } }, consumed: 10 })
@@ -154,6 +273,8 @@ eq("markdown unordered markers use stable ASCII width", unorderedText, ["- one",
 eq("noteFromContext system-reminder", noteFromContext({ kind: "plugin", plugin: "agent-instructions" }, "<system-reminder>Additional instructions</system-reminder>"), { label: "system-reminder", text: "Additional instructions" })
 eq("noteFromContext system-reminder strips every frame", noteFromContext({ kind: "plugin", plugin: "skill" }, "<system-reminder>one</system-reminder>\n<system-reminder>two</system-reminder>"), { label: "system-reminder", text: "one\ntwo" })
 eq("noteFromContext compaction checkpoint", noteFromContext({ kind: "plugin", plugin: "compact", compactionId: "c1" }, "checkpoint preamble\n<compacted-summary>\nsummary body\n</compacted-summary>"), { label: "compaction", text: "checkpoint preamble\n\nsummary body" })
+eq("noteFromContext compact checkpoint source", noteFromContext({ kind: "compact-checkpoint" }, "checkpoint body"), { label: "compaction", text: "checkpoint body" })
+eq("noteFromContext compact summary source", noteFromContext({ kind: "compact-summary" }, "summary body"), { label: "compaction", text: "summary body" })
 eq("noteFromContext other plugin stays plain", noteFromContext({ kind: "plugin", plugin: "other" }, "plain text"), null)
 eq("noteFromContext non-string stays plain", noteFromContext({ kind: "plugin", plugin: "compact" }, 42), null)
 
@@ -318,7 +439,7 @@ ok("main settings loaded", shared.items.some((item) => item.label === "Busy Ente
 ok("model items moved to the Model tab", !shared.items.some((item) => item.label === "Default model" || item.label === "Default provider" || item.field === "reasoningEffort"))
 ok("manage sessions setting", shared.items.some((item) => item.kind === "manage-sessions" && item.label === "Manage sessions"))
 ok("new session setting", shared.items.some((item) => item.kind === "new-session" && item.label === "New session"))
-eq("main tab headers", shared.items.filter((item) => item.kind === "header").map((item) => item.label).join(","), "General,Graphics,Sessions,System")
+eq("main tab headers", shared.items.filter((item) => item.kind === "header").map((item) => item.label).join(","), "General,Graphics,Sessions,System,Developer")
 eq("settings menu is Main, Model, Update, MCP", SETTINGS_MENU.map((entry) => entry.id).join(","), "main,model,update,mcp")
 ok("main tab carries the left menu", Array.isArray(shared.menu) && shared.menu.map((entry) => entry.label).join(",") === "Main,Model,Update,MCP" && shared.menuIndex === 0)
 const presetItem = shared.items.find((item) => item.ns === "agent-presets")
@@ -442,6 +563,21 @@ eq("update status tone only when available", dshStatusItem.tone, undefined)
 ok("update tui up to date", updateItems.some((item) => item.kind === "update-info" && item.label === "Status" && item.value === "Up to date"))
 ok("update versions rows", updateItems.some((item) => item.kind === "update-versions" && item.pkg === "dsh") && updateItems.some((item) => item.kind === "update-versions" && item.pkg === "tui"))
 ok("update actions rows", updateItems.some((item) => item.kind === "update-check" && item.label === "Check now") && updateItems.some((item) => item.kind === "choice" && item.ns === "tui-updates" && item.field === "startupCheck" && item.options.length === 2))
+// The startup-check row shows the catalog label of its stored id. It used to
+// build the key itself (`t("value.on")`), and no catalog has a `value.on`
+// entry — so the row painted the key, "value.on", in every language.
+const startupRow = updateItems.find((item) => item.kind === "choice" && item.field === "startupCheck")
+eq("startup check shows the on label", startupRow.valueLabel, "on")
+eq("startup check keeps its option values", startupRow.options.map((option) => (typeof option === "object" ? option.value : option)).join(","), "on,off")
+{
+  const offRow = buildUpdateItems({ ...updateFixture, startupCheck: "off" }).find((item) => item.kind === "choice" && item.field === "startupCheck")
+  eq("startup check shows the off label", offRow.valueLabel, "off")
+  setLocale("zh-CN")
+  const zhRow = buildUpdateItems({ ...updateFixture, startupCheck: "on" }).find((item) => item.kind === "choice" && item.field === "startupCheck")
+  eq("startup check label follows the language", zhRow.valueLabel, "开")
+  eq("startup check options are translated", zhRow.options.map((option) => option.label).join(","), "开,关")
+  setLocale("en")
+}
 const availableFixture = structuredClone(updateFixture)
 availableFixture.tui.registry = { versions: ["0.1.1", "0.2.0"], distTags: { latest: "0.2.0" } }
 const availableStatus = buildUpdateItems(availableFixture).find((item) => item.kind === "update-info" && item.label === "Status" && item.value.startsWith("Update available"))
@@ -727,8 +863,8 @@ eq("single session title in header", (headerRows.match(/Test/g) ?? []).length, 1
 ok("session id hidden from header", !headerRows.includes("t1"))
 // user block
 const rendered = screen.cells.map((r) => r.map((c) => c.ch).join("")).join(NL2)
-ok("user pointer marks the turn", rendered.includes("❯ ") && !rendered.includes("you ·"))
-eq("single assistant header per request", (rendered.match(/dsh\s+·/g) ?? []).length, 1)
+ok("user panel marks the turn", rendered.includes("┃  ") && !rendered.includes("you ·"))
+eq("single assistant footer per request", (rendered.match(/▣  dsh/g) ?? []).length, 1)
 ok("no left session rail", !rendered.includes("Test session"))
 ok("multiline composer", rendered.includes("first line") && rendered.includes("second line"))
 ok("stats strip renders above the composer", rendered.includes("TTFT avg 400ms"))
@@ -762,7 +898,7 @@ ok("main tab drops model settings", !settingsRendered.includes("Default model"))
 // Grouped settings: section headers render as their own rows and the
 // selection / hit regions never rest on them.
 ok("settings groups rendered", settingsRendered.includes("GENERAL") && settingsRendered.includes("SESSIONS") && settingsRendered.includes("SYSTEM") && !settingsRendered.includes("MODELS"))
-ok("settings items are grouped", refreshedShared.items.filter((item) => item.kind === "header").map((item) => item.label).join(",") === "General,Graphics,Sessions,System")
+ok("settings items are grouped", refreshedShared.items.filter((item) => item.kind === "header").map((item) => item.label).join(",") === "General,Graphics,Sessions,System,Developer")
 ok("selection skips headers", app.settingsItems[app.settingsSelection]?.kind !== "header" && app.settingsSelection === refreshedShared.items.findIndex((item) => item.kind !== "header"))
 ok("header rows carry no hit region", !app.hitRegions.some((region) => region.kind === "settings-item" && app.settingsItems[region.settingsIndex]?.kind === "header"))
 ok("mouse settings targets", app.hitRegions.some((region) => region.kind === "settings-item" && region.settingsIndex === app.settingsSelection))
@@ -844,10 +980,9 @@ const helloX = selRows[userY].indexOf("hello")
 selApp.startTextSelection(helloX, userY)
 selApp.updateTextSelection(wordX + "selectable".length - 1, answerY)
 const multiSel = selApp.selectionText().split(NL2)
-// The pointer row carries a trailing timestamp, so a drag that reaches the end
-// of the line takes it along — the text itself still starts the selection.
+// User text remains selectable inside its padded panel.
 ok("multi-row selection first line starts at the user text", multiSel[0].startsWith("hello world"))
-eq("multi-row selection last line", multiSel.at(-1), "  selectable")
+eq("multi-row selection last line", multiSel.at(-1), "     selectable")
 // Wide runes: continuation cells are skipped, CJK survives the copy intact.
 const cjkApp = new App(fakeTerm)
 cjkApp.setSession({ id: "t1", title: "Test" })
@@ -1067,7 +1202,7 @@ const narrowStripApp = new App({ cols: 60, rows: 30, started: true })
 narrowStripApp.setSession({ id: "t1", title: "Test" })
 narrowStripApp.setMetrics(metricsSnapshot)
 const narrowStripRow = narrowStripApp.render().cells.map((r) => r.map((c) => c.ch).join("")).find((line) => line.includes("▤"))
-ok("narrow strip keeps whole groups and elides", narrowStripRow.includes("1 turn · 2 steps") && narrowStripRow.includes("│…") && !narrowStripRow.includes("cache"))
+ok("narrow strip keeps whole groups and elides", narrowStripRow.includes("1 turn · 2 steps") && narrowStripRow.includes(" …") && !narrowStripRow.includes("cache"))
 ok("narrow strip never cuts a figure in half", !narrowStripRow.includes("cach"))
 // "Wide" for the strip means just under the status-rail threshold: at rail
 // widths the rail carries the figures expanded and the strip drops out whole.
@@ -1075,7 +1210,7 @@ const wideStripApp = new App({ cols: 119, rows: 30, started: true })
 wideStripApp.setSession({ id: "t1", title: "Test" })
 wideStripApp.setMetrics(metricsSnapshot)
 const wideStripRow = wideStripApp.render().cells.map((r) => r.map((c) => c.ch).join("")).find((line) => line.includes("▤"))
-ok("wide strip advertises the command", wideStripRow.includes("/stats") && !wideStripRow.includes("│…"))
+ok("wide strip advertises the command", wideStripRow.includes("/stats") && !wideStripRow.includes(" …"))
 const railWidthApp = new App({ cols: 140, rows: 30, started: true })
 railWidthApp.setSession({ id: "t1", title: "Test" })
 railWidthApp.setMetrics(metricsSnapshot)
@@ -1134,10 +1269,8 @@ gapAssistant.streaming = false
 const gapRows = gapApp.render().cells.map((r) => r.map((c) => c.ch).join(""))
 const thinkIdx = gapRows.findIndex((r) => r.includes("thinking"))
 const answerIdx = gapRows.findIndex((r) => r.includes("answer"))
-// A blank line separates a collapsed thinking row from the visible answer, and
-// the answer's own `dsh · time` label sits between them.
-ok("thinking row sits right above the answer label", thinkIdx >= 0 && answerIdx === thinkIdx + 3
-  && gapRows[thinkIdx + 1].trim() === "" && gapRows[thinkIdx + 2].includes("dsh"))
+ok("one blank row separates thinking from the answer", thinkIdx >= 0 && answerIdx === thinkIdx + 2
+  && gapRows[thinkIdx + 1].trim() === "")
 
 // ---- theme / activity animation ----
 const SPINNER = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
@@ -1152,49 +1285,20 @@ ok("running tool shows flowing spinner", toolRow && SPINNER.some((ch) => toolRow
 animApp.updateTool("c1", { status: "ok", result: "done" })
 ok("animation stops when tool finishes", !animApp.hasAnimation())
 
-// Running composer border: the flat yellow frame becomes a flowing gold
-// marching-ants frame (several gold tones around the perimeter, advancing
-// over time, with the warning gold still the dominant color).
+// The composer keeps one stable focus stripe; only live activity animates.
 {
-  const borderApp = new App(fakeTerm)
-  borderApp.setSession({ id: "t1", title: "Test" })
-  const idleScreen = borderApp.render()
-  const idleTopRow = idleScreen.cells.find((row) => row.some((cell) => cell.ch === "╭"))
-  const idleDashColors = new Set(idleTopRow.filter((cell) => cell.ch === "─").map((cell) => cell.style?.fg))
-  eq("idle composer border is flat", idleDashColors.size, 1)
-  ok("idle composer border uses theme border color", [...idleDashColors].every((c) => c === THEME.border))
-
-  borderApp.setStatus("running")
-  const realNow = Date.now
-  let fakeNow = 1_000_000
-  Date.now = () => fakeNow
-  const mixHex = (a, b, t) => "#" + [0, 2, 4].map((i) => Math.round(parseInt(a.slice(i, i + 2), 16) + (parseInt(b.slice(i, i + 2), 16) - parseInt(a.slice(i, i + 2), 16)) * t).toString(16).padStart(2, "0")).join("")
-  const golds = new Set([THEME.warning, THEME.warningDim, mixHex(THEME.warning, "ffffff", 0.5)])
-  try {
-    const flowScreen = borderApp.render()
-    const topIdx = flowScreen.cells.findIndex((row) => row.some((cell) => cell.ch === "╭"))
-    const flowTopRow = flowScreen.cells[topIdx]
-    const flowColors = new Set(flowTopRow.filter((cell) => cell.ch === "─").map((cell) => cell.style?.fg))
-    ok("running border flows with several gold tones", flowColors.size >= 2)
-    ok("running border keeps the warning gold", flowColors.has(THEME.warning) && [...flowColors].every((c) => c !== THEME.border))
-    ok("running border stays in the gold family", [...flowColors].every((c) => golds.has(c)))
-    const sideRow = flowScreen.cells[topIdx + 1]
-    ok("running side borders flow", sideRow.some((cell) => cell.ch === "│" && golds.has(cell.style?.fg)))
-    // One 80ms step advances the marching-ants phase, so the tone sequence
-    // along the top edge shifts even though nothing else changed.
-    const before = flowTopRow.filter((c) => c.ch === "─").map((c) => c.style?.fg).join(",")
-    fakeNow += 80
-    const afterScreen = borderApp.render()
-    const afterTopRow = afterScreen.cells[afterScreen.cells.findIndex((row) => row.some((cell) => cell.ch === "╭"))]
-    const after = afterTopRow.filter((c) => c.ch === "─").map((c) => c.style?.fg).join(",")
-    ok("running border advances over time", before !== after)
-  } finally {
-    Date.now = realNow
-  }
-  borderApp.setStatus("idle")
-  const settledScreen = borderApp.render()
-  const settledTopRow = settledScreen.cells.find((row) => row.some((cell) => cell.ch === "╭"))
-  ok("border settles back to static when idle", settledTopRow.filter((cell) => cell.ch === "─").every((cell) => cell.style?.fg === THEME.border))
+  const composerApp = new App(fakeTerm)
+  composerApp.setSession({ id: "t1", title: "Test" })
+  const idle = composerApp.render()
+  const hit = composerApp.hitRegions.find((region) => region.kind === "composer")
+  const stripe = (screen) => screen.cells.slice(hit.y, hit.y + hit.height).map((row) => row[hit.x])
+  ok("composer focus stripe uses the brand accent", stripe(idle).every((cell) => cell.ch === "┃" && cell.style.fg === THEME.primary))
+  composerApp.setStatus("running")
+  const running = composerApp.render()
+  ok("running composer keeps a quiet focus stripe", stripe(running).every((cell) => cell.ch === "┃" && cell.style.fg === THEME.primary))
+  ok("composer has no decorative frame", idle.cells.slice(hit.y, hit.y + hit.height).every((row) => !row.some((cell) => "╭╮╰╯".includes(cell.ch) && cell.ch)))
+  composerApp.setStatus("idle")
+  ok("idle composer stops animation", !composerApp.hasAnimation())
 }
 
 // Streaming thinking header carries the flowing spinner too.
@@ -1290,28 +1394,28 @@ ok("slider hint mentions Tab", sliderRendered.includes("Tab"))
 ok("effort slider current name", sliderRendered.includes("high"))
 ok("effort slider row keeps current value", sliderMidRowText.includes("high"))
 ok("effort slider real range hint", sliderRendered.includes("off") && sliderRendered.includes("max"))
-const midComposerRow = sliderMidScreen.cells.find((row) => row.some((cell) => cell.ch === "╭"))?.map((cell) => cell.ch).join("") ?? ""
+const midComposerRow = sliderMidScreen.cells[sliderApp._layout().transcriptBottom].map((cell) => cell.ch).join("")
 ok("composer label drops effort word", midComposerRow.includes("high") && !midComposerRow.includes("effort"))
 ok("effort slider not animated at mid strength", !sliderApp.hasAnimation())
 sliderApp.setEffortSlider({ levels: [{ id: "off", name: "off" }, { id: "high", name: "high" }, { id: "max", name: "max" }], current: "max" })
-ok("effort slider animates at max", sliderApp.hasAnimation())
+ok("max strength stays still while idle", !sliderApp.hasAnimation())
 const sliderMaxScreen = sliderApp.render()
 const sliderMaxRendered = sliderMaxScreen.cells.map((r) => r.map((c) => c.ch).join("")).join(NL2)
 ok("effort slider max marker is text-safe", sliderMaxRendered.includes("↑") && !sliderMaxRendered.includes(String.fromCodePoint(0x26A1)))
 const sliderMaxRow = sliderMaxScreen.cells.find((row) => row.some((cell) => cell.ch === "█"))
 const sliderGradientColors = new Set(sliderMaxRow?.filter((cell) => cell.ch === "█").map((cell) => cell.style?.fg).filter(Boolean))
-ok("effort slider max uses gradient colors", sliderGradientColors.size > 1)
+ok("effort slider uses a solid accent", sliderGradientColors.size === 1)
 const composerTopRow = sliderMaxScreen.cells.find((row) => {
   const text = row.map((cell) => cell.ch).join("")
-  return text.includes("╭") && text.includes("↑") && text.includes("max")
+  return text.includes("┃") && text.includes("↑") && text.includes("max")
 })
 const composerTopText = composerTopRow?.map((cell) => cell.ch).join("") ?? ""
-ok("effort value is pinned to composer top-right", composerTopText.lastIndexOf("max") > composerTopText.length / 2 && composerTopText.includes("╮"))
+ok("effort value is pinned to composer top-right", composerTopText.lastIndexOf("max") > composerTopText.length / 2 && composerTopText.includes("Tab"))
 const maxStart = composerTopText.lastIndexOf("max")
 const maxTextColors = new Set(composerTopRow?.slice(maxStart, maxStart + 3).map((cell) => cell.style?.fg).filter(Boolean))
-ok("max text uses flowing gradient colors", maxTextColors.size > 1)
+ok("max label uses a stable accent", maxTextColors.size === 1)
 sliderApp.effortSliderVisible = false
-ok("max animation continues after slider closes", sliderApp.hasAnimation())
+ok("closing the slider keeps idle rendering still", !sliderApp.hasAnimation())
 // A one-level Off-only model is not max and must not animate.
 const offOnlyApp = new App(fakeTerm)
 offOnlyApp.setSession({ id: "t1", title: "Test" })

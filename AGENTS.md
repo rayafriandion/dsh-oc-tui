@@ -97,13 +97,31 @@ npm run check   # node --check over lib/, bin/
 npm test        # standalone smoke tests (no dsh needed)
 ```
 
-`tests/esc-questions.test.mjs` reports 8 failures on an otherwise clean checkout in
-this environment. It is a dependency problem, not a defect in the tree: the installed
-`@deepseek-ai/dsh-user-questions` was pinned back to an `rc` revision whose peer
-`dsh-agent` conflicts with the rest, and nothing calls
-`userQuestions.registerProvider()`. Do not treat those failures as yours to fix, and
-do not "fix" them by unpinning the dependency — the pin is what lets the tarball
-install cleanly (see the peer-dependency note in the README).
+`tests/esc-questions.test.mjs` bridges the pinned `rc` user-questions provider to
+the real Cordis waterfall used by the newer host. Keep the dependency pin: it
+lets the tarball install cleanly (see the peer-dependency note in the README).
+The test must pass both with this bridge and with the host's waterfall service.
+
+## The dsh version gate
+
+`lib/dsh-version.js` refuses to boot on a dsh this build has no evidence for, and
+`lib/boot-block.js` paints the only thing that run draws. Two declarations in
+`package.json` drive it: `engines.dsh` is the hard range (dsh's own preflight
+enforces it too, by disabling the bundle's rows before they mount) and
+`dshSupport.tested` is the set this build was actually run against — running the
+suite against a new dsh is what earns an entry. `dshSupport.recommended` is what
+the page tells the reader to install and must be one of `tested`.
+
+A host that can be read but does not match gets one page and nothing else: no
+session, no settings, no update check, and only Esc/Ctrl+C is accepted. A host
+whose version cannot be read at all is *not* blocked — refusing on a distribution
+we cannot introspect would be a bug in this module, not a fact about the host.
+
+`tests/smoke.test.mjs` covers the verdicts and the detection order,
+`tests/render.test.mjs` the page and its behaviour at short heights. Suites that
+boot the real plugin set `DSH_TUI_IGNORE_DSH_VERSION=1`, so they test the
+interface rather than the gate; that variable is also the maintainer escape hatch
+for an unreleased host.
 
 ## Settings must work on both dsh generations
 

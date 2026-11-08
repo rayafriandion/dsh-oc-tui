@@ -6,6 +6,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { createMermaidRenderer, mermaidCachePath } from '../lib/mermaid.js'
 import { App } from '../lib/ui.js'
+import { getTheme } from '../lib/themes.js'
 
 let failed = 0
 const ok = (name, cond, extra = '') => {
@@ -111,6 +112,14 @@ const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'tui-media-'))
   const pendingSig = app._imagePendingSig.get('k1')
   app._lastTransWidth = 30
   ok('the in-flight request remembers its geometry', pendingSig !== undefined && pendingSig !== app.imageRenderSignature())
+
+  // A palette switch while the old image is still loading must issue a new
+  // request: halfblock transparency is composited over the theme background.
+  app.setTheme('dracula')
+  out.length = 0
+  app._imageLines(src, block, 30, out)
+  ok('a theme switch requests a fresh render even while one is loading',
+    requests === 4 && app.imageRenderOptions().bgHex === getTheme('dracula').background, 'requests=' + requests)
 }
 
 console.log(failed === 0 ? '\nall media tests passed' : `\n${failed} media assertion(s) failed`)

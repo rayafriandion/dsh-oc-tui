@@ -10,6 +10,10 @@
 //   node tests/locale.test.mjs
 process.env.DSH_TUI_LOCALE = "en"
 
+// This suite boots the interface, not the host gate: pin the version verdict so a
+// machine running a dsh this build has not been run against still runs the tests.
+process.env.DSH_TUI_IGNORE_DSH_VERSION = "1"
+
 import { EventEmitter } from "node:events"
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
@@ -17,6 +21,7 @@ import { join } from "node:path"
 import { Context, Service } from "@deepseek-ai/cordis"
 import { Terminal } from "../lib/term.js"
 import { LOCALES } from "../lib/i18n.js"
+import { getTheme } from "../lib/themes.js"
 
 const smokeHome = mkdtempSync(join(tmpdir(), "dsh-oc-tui-locale-home-"))
 process.env.DSH_HOME = smokeHome
@@ -55,8 +60,10 @@ Object.defineProperty(process, "stdin", { value: stdin, configurable: true })
 Object.defineProperty(process, "stdout", { value: stdout, configurable: true })
 
 const frames = []
+let lastScreen
 const realPaint = Terminal.prototype.paint
 Terminal.prototype.paint = function (screen) {
+  lastScreen = screen
   const rows = []
   for (let y = 0; y < screen.rows; y++) {
     let line = ""
@@ -230,6 +237,23 @@ ok("System clears the namespace instead of storing an id",
 ok("System resolves back to the pinned environment locale",
   lastFrame().includes("New session") && lastFrame().includes("Language"),
   "last frame:\n" + lastFrame())
+
+// Theme is the next selectable row and persists in the legacy namespace.
+await move(1)
+ok("the legacy settings page offers the default theme",
+  lastFrame().includes("Theme") && lastFrame().includes("DeepSeek Standard"))
+stdin.send("\r")
+await settle(30)
+ok("the theme picker lists the available palettes",
+  lastFrame().includes("Dracula") && lastFrame().includes("GitHub Dark") && lastFrame().includes("Nord"))
+await move(2)
+stdin.send("\r")
+await settle(60)
+ok("the legacy host persists the selected theme",
+  settings.stored.get("tui-theme")?.preference === "dracula")
+ok("the new theme is painted without losing the session",
+  lastScreen.cells[1][0].style.bg === "#" + getTheme("dracula").background && lastFrame().includes("New session"),
+  "background: " + lastScreen.cells[1][0].style.bg)
 
 Object.defineProperty(process, "stdin", realStdin)
 Object.defineProperty(process, "stdout", realStdout)

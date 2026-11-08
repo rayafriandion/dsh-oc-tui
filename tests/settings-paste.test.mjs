@@ -18,6 +18,10 @@
 // Run: node tests/settings-paste.test.mjs
 process.env.DSH_TUI_LOCALE = "en"
 
+// This suite boots the interface, not the host gate: pin the version verdict so a
+// machine running a dsh this build has not been run against still runs the tests.
+process.env.DSH_TUI_IGNORE_DSH_VERSION = "1"
+
 import { EventEmitter } from "node:events"
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
@@ -102,7 +106,10 @@ class AgentsStub extends Service {
     return { agent, dispose: async () => {} }
   }
 }
-class CommandsStub extends Service { constructor(ctx) { super(ctx, "commands") } }
+class CommandsStub extends Service {
+  constructor(ctx) { super(ctx, "commands") }
+  find() { return undefined }
+}
 class SessionPersistenceStub extends Service { constructor(ctx) { super(ctx, "sessionPersistence") } }
 class TuiStartupStub extends Service { constructor(ctx) { super(ctx, "tuiStartup") } }
 
@@ -147,6 +154,45 @@ await settle(30)
 const { liveTui } = await import("../lib/bridge.js")
 ok("the real plugin boots and registers a live TUI handle", liveTui() !== null)
 ok("a real App instance was observed through its own render", app !== null)
+
+// Exercise suggestions through the real key and mouse decoders before opening
+// a session; completion must neither submit a message nor steal ordinary Tab.
+stdin.send("/")
+await settle(5)
+stdin.send("\x1b[B")
+await settle(5)
+const selectedCommand = app.commandMatches()[app.commandSelection]?.[0]
+stdin.send("\t")
+await settle(5)
+ok("Down and Tab complete the selected command", app.inputText === selectedCommand + " ")
+ok("completion leaves the title screen open", ctx.get("agents").roots().length === 0)
+stdin.send("\x03") // clear
+stdin.send("/res")
+stdin.send("\r")
+await settle(5)
+ok("Enter completes an unfinished command without executing it", app.inputText === "/resume ")
+stdin.send("\x03")
+stdin.send("/")
+await settle(5)
+stdin.send("\x1b")
+await settle(15)
+ok("Esc closes suggestions and keeps the draft", app.inputText === "/" && app.commandMatches().length === 0)
+stdin.send("\x03")
+stdin.send("/")
+await settle(5)
+const commandHit = app.hitRegions.find((region) => region.kind === "command" && region.commandIndex === 1)
+ok("command choices expose a real mouse target", !!commandHit)
+if (commandHit) {
+  stdin.send(`\x1b[<0;${commandHit.x + 3};${commandHit.y + 1}M`)
+  await settle(5)
+  ok("clicking a suggestion completes it", app.inputText === "/settings ")
+  stdin.send("\r")
+  await settle(10)
+  ok("a complete command executes on Enter", app.overlay === "settings")
+  stdin.send("\x1b")
+  await settle(15)
+}
+stdin.send("\x03")
 
 // A session, so the composer exists as a real input row rather than the title
 // screen's menu.
