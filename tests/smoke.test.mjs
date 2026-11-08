@@ -9,6 +9,9 @@ import { InterruptState } from "../lib/interrupt.js"
 import { SessionMetrics, cacheHitPercent, mergeSessionStats } from "../lib/metrics.js"
 import { SETTINGS_MENU, loadModelSettings, loadProviderModels, loadWebSettings, saveWebSetting } from "../lib/web-settings.js"
 import { DSH_PACKAGE, TUI_PACKAGE, parseRegistryView, isPrerelease, coreSegments, latestStable, updateStatus, compareVersions, buildUpdateItems, buildVersionItems, resolveActiveProfile, stderrSummary, dshLockEntries, installResultFrom, restartPlan, restartSpec, restartPlanPath, writeRestartPlan, applierPath, tarballFileName, tarballCachePath, formatBytes, formatDownloadProgress, checkIntegrity, readStagedInstall, writeStagedInstall, clearStagedInstall, installMarkerPath, readInstallMarker, writeInstallMarker } from "../lib/updates.js"
+import { setLocale } from "../lib/i18n.js"
+import { legacyRouteOverrides, recordSelection, recordsSelections } from "../lib/model-route.js"
+import { dshBootGate, dshSupport, evaluateDshSupport, parseDshRange, runningDshVersion, satisfiesDshRange } from "../lib/dsh-version.js"
 import { renderMarkdown } from "../lib/markdown.js"
 import { displayWidth, wrapText, roughTokens, truncateWidth, shortenPath, contentText, timeString, toolSummary, detectImageMediaType, imageMediaTypeFromName, decodeDataUrl, localImagePath, runeWidth, userContentBlocks } from "../lib/util.js"
 
@@ -19,6 +22,119 @@ const eq = (name, actual, expected) => {
   else { console.log("FAIL " + name + "  got " + a + "  want " + e); failed++ }
 }
 const ok = (name, cond) => cond ? console.log("ok   " + name) : (console.log("FAIL " + name), failed++)
+
+// ---- dsh version gate ----------------------------------------------------
+// The plugin declares a hard range (`engines.dsh`, which dsh's own preflight also
+// enforces) and the versions this build was actually run against. Anything
+// outside the run set refuses to start: 0.2.2-rc.1 sat inside the old range and
+// still broke every model switch, so "inside the range" was never the same claim
+// as "works".
+eq("a listed version satisfies the range", satisfiesDshRange("0.2.1-rc.2", ">=0.1.1-rc.2 <0.3.0-0"), true)
+eq("the exact floor is inside", satisfiesDshRange("0.1.1-rc.2", ">=0.1.1-rc.2 <0.3.0-0"), true)
+eq("below the floor is outside", satisfiesDshRange("0.1.1-rc.1", ">=0.1.1-rc.2 <0.3.0-0"), false)
+eq("the next line is outside", satisfiesDshRange("0.3.0-rc.1", ">=0.1.1-rc.2 <0.3.0-0"), false)
+eq("the upper bound is exclusive", satisfiesDshRange("0.3.0-0", ">=0.1.1-rc.2 <0.3.0-0"), false)
+eq("alternatives are ORed", satisfiesDshRange("0.2.0", ">=0.3.0 || =0.2.0"), true)
+eq("a leading v is normalized", satisfiesDshRange("v0.2.1", "=0.2.1"), true)
+eq("a range it does not understand is unknown, not false", satisfiesDshRange("0.2.0", "^0.2"), null)
+eq("a version it does not understand is unknown", satisfiesDshRange("nonsense", ">=0.1.0"), null)
+eq("an empty range is unparseable", parseDshRange(""), null)
+{
+  const support = { range: ">=0.1.0 <0.3.0-0", recommended: "0.2.2-rc.1", tested: ["0.2.1-rc.2", "0.2.2-rc.1"] }
+  eq("a verified version passes", evaluateDshSupport("0.2.2-rc.1", support).verdict, "ok")
+  eq("an unrun version inside the range is unverified", evaluateDshSupport("0.2.9", support).verdict, "unverified")
+  eq("a version outside the range is unsupported", evaluateDshSupport("0.3.0", support).verdict, "unsupported")
+  eq("an unreadable version is unknown", evaluateDshSupport(null, support).verdict, "unknown")
+  eq("an empty run set falls back to the range", evaluateDshSupport("0.2.9", { ...support, tested: [] }).verdict, "ok")
+  eq("the gate lets a verified host through",
+    dshBootGate({ env: {}, support, probe: () => ({ version: "0.2.2-rc.1", source: "test" }) }), null)
+  eq("the gate lets an unreadable host through",
+    dshBootGate({ env: {}, support, probe: () => ({ version: null, source: "unknown" }) }), null)
+  const refused = dshBootGate({ env: {}, support, probe: () => ({ version: "0.3.0", source: "test" }) })
+  eq("the gate refuses an unsupported host", refused?.verdict, "unsupported")
+  eq("the refusal carries what the page prints",
+    [refused?.version, refused?.recommended, refused?.range], ["0.3.0", "0.2.2-rc.1", ">=0.1.0 <0.3.0-0"])
+  eq("the gate refuses an in-range version this build never ran",
+    dshBootGate({ env: {}, support, probe: () => ({ version: "0.2.9", source: "test" }) })?.verdict, "unverified")
+  eq("the escape hatch bypasses the gate",
+    dshBootGate({ env: { DSH_TUI_IGNORE_DSH_VERSION: "1" }, support, probe: () => ({ version: "0.3.0" }) }), null)
+  eq("an explicit 0 does not bypass it",
+    dshBootGate({ env: { DSH_TUI_IGNORE_DSH_VERSION: "0" }, support, probe: () => ({ version: "0.3.0" }) })?.verdict, "unsupported")
+}
+{
+  const manifest = {
+    engines: { dsh: ">=0.1.1-rc.2 <0.3.0-0" },
+    dshSupport: { recommended: "0.2.2-rc.1", tested: ["0.2.1-rc.2", "0.2.2-rc.1"] },
+  }
+  eq("support is read off the manifest", dshSupport(manifest), {
+    range: ">=0.1.1-rc.2 <0.3.0-0", recommended: "0.2.2-rc.1", tested: ["0.2.1-rc.2", "0.2.2-rc.1"],
+  })
+  const real = dshSupport()
+  ok("this build declares a range and a run set", real.range !== "" && real.tested.length > 0)
+  ok("the recommended version is one of the verified ones", real.tested.includes(real.recommended))
+  ok("every verified version is inside the declared range",
+    real.tested.every((version) => satisfiesDshRange(version, real.range) === true))
+  eq("the recommended version is accepted by this build's own gate",
+    evaluateDshSupport(real.recommended, real).verdict, "ok")
+}
+{
+  const resolveWith = (specs) => (entry, spec) => (spec in specs ? { version: specs[spec] } : null)
+  eq("the runtime version comes from app-boot first",
+    runningDshVersion({ entry: "dsh", resolve: resolveWith({ "@deepseek-ai/dsh-app-boot/package.json": "0.2.2-rc.1", "@deepseek-ai/dsh/package.json": "0.1.0" }), detect: () => ({ found: false }) }),
+    { version: "0.2.2-rc.1", source: "@deepseek-ai/dsh-app-boot/package.json" })
+  eq("it falls back to the CLI package",
+    runningDshVersion({ entry: "dsh", resolve: resolveWith({ "@deepseek-ai/dsh/package.json": "0.2.1-rc.2" }), detect: () => ({ found: false }) }),
+    { version: "0.2.1-rc.2", source: "@deepseek-ai/dsh/package.json" })
+  eq("then to the dsh on PATH",
+    runningDshVersion({ entry: "", resolve: () => null, detect: () => ({ found: true, version: "0.2.0-rc.2" }) }),
+    { version: "0.2.0-rc.2", source: "path" })
+  eq("an unreadable host is unknown, not an error",
+    runningDshVersion({ entry: "", resolve: () => null, detect: () => ({ found: false }) }),
+    { version: null, source: "unknown" })
+  eq("a throwing PATH probe is still unknown",
+    runningDshVersion({ entry: "", resolve: () => null, detect: () => { throw new Error("no PATH") } }),
+    { version: null, source: "unknown" })
+}
+
+// ---- model route: two host generations -----------------------------------
+// dsh 0.2.2 fixes a step's route before prompt assembly and its `agent/request`
+// waterfall throws when a listener proposes another one, so the same choice has
+// to be recorded through `agent.model.select()` there. 0.2.1 has no
+// `agent.model` at all and can only be steered through the waterfall; one build
+// serves both, picked by feature detection on the live agent.
+eq("a 0.2.1 agent has no selection of its own", recordsSelections({ id: "a" }), false)
+eq("a 0.2.2 agent is recognised by agent.model.select",
+  recordsSelections({ id: "a", model: { select() {}, current() {} } }), true)
+// The waterfall only speaks when it has something to add: a config that already
+// names a route and no TUI preference leaves it untouched (this is the pass a
+// 0.2.2 host relies on, since its listener returns before calling this).
+eq("an unset preference adds nothing",
+  legacyRouteOverrides({ provider: "p", model: "m" }, {}, {}, undefined), null)
+eq("the waterfall overlays the TUI choice on 0.2.1",
+  legacyRouteOverrides({ provider: "p", model: "m" }, { provider: "q" }, {}, "high"),
+  { provider: "q", reasoningEffort: "high" })
+eq("the waterfall fills a route the loop left empty",
+  legacyRouteOverrides({}, {}, { provider: "p", model: "m" }, undefined),
+  { provider: "p", model: "m" })
+{
+  const written = []
+  const agent = { model: { current: () => ({ provider: "old", model: "old-m" }), select: (s) => written.push(s) } }
+  eq("a route change records a complete pair",
+    recordSelection(agent, { model: "new-m" }, { provider: "view-p", model: "view-m" }),
+    { provider: "old", model: "new-m" })
+  eq("an effort change carries the level",
+    recordSelection(agent, {}, { provider: "view-p", model: "view-m" }, { withEffort: true, effort: "max" }),
+    { provider: "old", model: "old-m", reasoningEffort: "max" })
+  eq("a model switch drops a stale effort",
+    recordSelection(agent, {}, { provider: "view-p", model: "view-m" }, { effort: "max" }),
+    { provider: "old", model: "old-m" })
+  eq("every record reached the agent", written.length, 3)
+  eq("a rejected selection is swallowed",
+    recordSelection({ model: { select() { throw new Error("no route") }, current: () => ({}) } }, {}, { provider: "p", model: "m" }), null)
+  eq("an incomplete route is never recorded",
+    recordSelection({ model: { select() { throw new Error("should not run") }, current: () => ({}) } }, {}, {}), null)
+  eq("a 0.2.1 agent records nothing", recordSelection({ id: "a" }, {}, { provider: "p", model: "m" }), null)
+}
 
 // ---- util ----
 eq("displayWidth CJK", displayWidth("中文a"), 5)
@@ -323,7 +439,7 @@ ok("main settings loaded", shared.items.some((item) => item.label === "Busy Ente
 ok("model items moved to the Model tab", !shared.items.some((item) => item.label === "Default model" || item.label === "Default provider" || item.field === "reasoningEffort"))
 ok("manage sessions setting", shared.items.some((item) => item.kind === "manage-sessions" && item.label === "Manage sessions"))
 ok("new session setting", shared.items.some((item) => item.kind === "new-session" && item.label === "New session"))
-eq("main tab headers", shared.items.filter((item) => item.kind === "header").map((item) => item.label).join(","), "General,Graphics,Sessions,System")
+eq("main tab headers", shared.items.filter((item) => item.kind === "header").map((item) => item.label).join(","), "General,Graphics,Sessions,System,Developer")
 eq("settings menu is Main, Model, Update, MCP", SETTINGS_MENU.map((entry) => entry.id).join(","), "main,model,update,mcp")
 ok("main tab carries the left menu", Array.isArray(shared.menu) && shared.menu.map((entry) => entry.label).join(",") === "Main,Model,Update,MCP" && shared.menuIndex === 0)
 const presetItem = shared.items.find((item) => item.ns === "agent-presets")
@@ -447,6 +563,21 @@ eq("update status tone only when available", dshStatusItem.tone, undefined)
 ok("update tui up to date", updateItems.some((item) => item.kind === "update-info" && item.label === "Status" && item.value === "Up to date"))
 ok("update versions rows", updateItems.some((item) => item.kind === "update-versions" && item.pkg === "dsh") && updateItems.some((item) => item.kind === "update-versions" && item.pkg === "tui"))
 ok("update actions rows", updateItems.some((item) => item.kind === "update-check" && item.label === "Check now") && updateItems.some((item) => item.kind === "choice" && item.ns === "tui-updates" && item.field === "startupCheck" && item.options.length === 2))
+// The startup-check row shows the catalog label of its stored id. It used to
+// build the key itself (`t("value.on")`), and no catalog has a `value.on`
+// entry — so the row painted the key, "value.on", in every language.
+const startupRow = updateItems.find((item) => item.kind === "choice" && item.field === "startupCheck")
+eq("startup check shows the on label", startupRow.valueLabel, "on")
+eq("startup check keeps its option values", startupRow.options.map((option) => (typeof option === "object" ? option.value : option)).join(","), "on,off")
+{
+  const offRow = buildUpdateItems({ ...updateFixture, startupCheck: "off" }).find((item) => item.kind === "choice" && item.field === "startupCheck")
+  eq("startup check shows the off label", offRow.valueLabel, "off")
+  setLocale("zh-CN")
+  const zhRow = buildUpdateItems({ ...updateFixture, startupCheck: "on" }).find((item) => item.kind === "choice" && item.field === "startupCheck")
+  eq("startup check label follows the language", zhRow.valueLabel, "开")
+  eq("startup check options are translated", zhRow.options.map((option) => option.label).join(","), "开,关")
+  setLocale("en")
+}
 const availableFixture = structuredClone(updateFixture)
 availableFixture.tui.registry = { versions: ["0.1.1", "0.2.0"], distTags: { latest: "0.2.0" } }
 const availableStatus = buildUpdateItems(availableFixture).find((item) => item.kind === "update-info" && item.label === "Status" && item.value.startsWith("Update available"))
@@ -767,7 +898,7 @@ ok("main tab drops model settings", !settingsRendered.includes("Default model"))
 // Grouped settings: section headers render as their own rows and the
 // selection / hit regions never rest on them.
 ok("settings groups rendered", settingsRendered.includes("GENERAL") && settingsRendered.includes("SESSIONS") && settingsRendered.includes("SYSTEM") && !settingsRendered.includes("MODELS"))
-ok("settings items are grouped", refreshedShared.items.filter((item) => item.kind === "header").map((item) => item.label).join(",") === "General,Graphics,Sessions,System")
+ok("settings items are grouped", refreshedShared.items.filter((item) => item.kind === "header").map((item) => item.label).join(",") === "General,Graphics,Sessions,System,Developer")
 ok("selection skips headers", app.settingsItems[app.settingsSelection]?.kind !== "header" && app.settingsSelection === refreshedShared.items.findIndex((item) => item.kind !== "header"))
 ok("header rows carry no hit region", !app.hitRegions.some((region) => region.kind === "settings-item" && app.settingsItems[region.settingsIndex]?.kind === "header"))
 ok("mouse settings targets", app.hitRegions.some((region) => region.kind === "settings-item" && region.settingsIndex === app.settingsSelection))

@@ -7,6 +7,7 @@
 // and compare an emulated terminal against the frame the app just produced.
 import { Terminal } from "../lib/term.js"
 import { App, THEME } from "../lib/ui.js"
+import { renderBootBlock } from "../lib/boot-block.js"
 import { DEFAULT_THEME, THEME_IDS, getTheme } from "../lib/themes.js"
 import { runeWidth } from "../lib/util.js"
 import { setLocale } from "../lib/i18n.js"
@@ -1021,6 +1022,91 @@ setLocale("en")
   const help = text(app.render())
   ok("help overlay agrees with the composer hint", help.includes("Ctrl+Enter") && !help.includes("Ctrl+J"))
   app.overlay = null
+}
+
+// ---- block gutter -----------------------------------------------------------
+// Every pair of transcript blocks is separated by exactly one blank row, decided
+// once by the transcript assembler rather than by each block renderer. The old
+// per-kind paddings drifted: a context note sat flush under the user bubble
+// above it, and a system line was glued to whatever preceded it.
+{
+  setLocale("en")
+  const app = new App({ cols: 100, rows: 40, on() {} })
+  app.setSession({ id: "s", title: "Gaps", model: "model-a" })
+  const painted = () => app.render().cells.map((row) => row.map((cell) => cell.ch).join("").trimEnd())
+  app.addUser("hi", { time: 1000 })
+  app.addNote("Current runtime context. This snapshot supersedes earlier ones.", "runtime-context")
+  app.addUser("hi again", { time: 2000 })
+  const rows = painted()
+  const noteY = rows.findIndex((row) => row.includes("runtime context"))
+  ok("a runtime-context note is a collapsible box", noteY >= 0 && rows[noteY].includes("\u25b8") && rows[noteY].includes("click to expand"))
+  ok("one blank row between a bubble and the note under it",
+    rows[noteY - 1] === "" && rows[noteY - 2].includes("\u2503"))
+  const secondY = rows.findIndex((row, i) => i > noteY && row.includes("\u2503") && row.includes("hi again"))
+  // `secondY` is the bubble's text row, one line below the panel's own padding.
+  ok("one blank row between the note and the next bubble",
+    secondY > 2 && rows[secondY - 1].trim() === "\u2503" && rows[secondY - 2] === "" && rows[secondY - 3] === rows[noteY])
+
+  app.setSystemPrompt("You are a helpful assistant.")
+  ok("a system prompt is a collapsible box", painted().some((row) => row.includes("system prompt") && row.includes("click to expand")))
+  app.setContextDetails("hide")
+  ok("hiding context details drops the note", !painted().some((row) => row.includes("runtime context")))
+  ok("hiding context details drops the system prompt too", !painted().some((row) => row.includes("system prompt")))
+  app.setContextDetails("show")
+  ok("showing them again restores both boxes",
+    painted().some((row) => row.includes("runtime context")) && painted().some((row) => row.includes("system prompt")))
+}
+
+// ---- steering is a badge on the prompt, not a second copy -------------------
+// The loop echoes a steered prompt as `user/message` only when it claims it from
+// the inbox; the composer had already drawn that prompt. Appending a block for
+// the echo is what made the same turn appear twice, the second one badged.
+{
+  setLocale("en")
+  const app = new App({ cols: 100, rows: 40, on() {} })
+  app.setSession({ id: "s", title: "Steering", model: "model-a" })
+  const painted = () => app.render().cells.map((row) => row.map((cell) => cell.ch).join("")).join("\n")
+  app.addUser("hi", { time: 1000 })
+  ok("a plain prompt carries no steering badge", !painted().includes("steering"))
+  ok("steering badges the prompt already on screen", app.markLastUserSteering() === true
+    && app.blocks.filter((block) => block.kind === "user").length === 1
+    && app.blocks[0].steering === true)
+  ok("the badge reaches the frame", painted().includes("steering"))
+  ok("badging twice changes nothing", app.markLastUserSteering() === true
+    && app.blocks.filter((block) => block.kind === "user").length === 1)
+}
+
+// ---- boot gate page ---------------------------------------------------------
+// The page that refuses to start has one job: name the version to install, and
+// keep saying so when the window is short. It replaces the interface rather than
+// covering it, so nothing else on this screen may assume a composer or a rail.
+{
+  setLocale("en")
+  const info = {
+    verdict: "unsupported", version: "0.3.0-rc.1", range: ">=0.1.1-rc.2 <0.3.0-0",
+    recommended: "0.2.2-rc.1", tested: ["0.2.1-rc.2", "0.2.2-rc.1"],
+  }
+  const paint = (cols, rows) => {
+    const screen = renderBootBlock(cols, rows, getTheme("deepseek"), info)
+    return screen.cells.map((row) => row.map((cell) => cell.ch).join("").replace(/\s+$/, ""))
+  }
+  const rows = paint(80, 24)
+  const joined = rows.join("\n")
+  ok("the boot page names the running version", joined.includes("0.3.0-rc.1"))
+  ok("the boot page names the version to install", joined.includes("npm i -g @deepseek-ai/dsh@0.2.2-rc.1"))
+  ok("the boot page offers the plugin update as the alternative", joined.includes("npm i -g dsh-oc-tui@latest"))
+  ok("the boot page says how to leave", joined.includes("Esc or Ctrl+C exits"))
+  ok("nothing from the interface is drawn", !joined.includes("Ask anything") && !joined.includes("DeepSeek Harness"))
+  // A short window drops the narration but must never drop the command, and the
+  // exit hint keeps the bottom row at every height.
+  for (const height of [10, 12, 14, 18, 30]) {
+    const short = paint(60, height)
+    ok("the command survives a " + height + "-row window", short.some((row) => row.includes("npm i -g @deepseek-ai/dsh@0.2.2-rc.1")))
+    ok("the exit hint keeps the last row at " + height, short[height - 1].includes("Esc or Ctrl+C exits"))
+    ok("no row overflows " + height + " rows", short.length === height)
+  }
+  const narrow = paint(40, 20)
+  ok("a narrow window still wraps instead of clipping the label", narrow.some((row) => row.includes("recommended")))
 }
 
 console.log("")

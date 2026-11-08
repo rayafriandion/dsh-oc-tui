@@ -12,6 +12,10 @@ import { TUI_SETTINGS, loadWebSettings, readTuiSetting, saveWebSetting } from '.
 import { setLocale, tv } from '../lib/i18n.js'
 
 process.env.DSH_TUI_LOCALE = 'en'
+
+// This suite boots the interface, not the host gate: pin the version verdict so a
+// machine running a dsh this build has not been run against still runs the tests.
+process.env.DSH_TUI_IGNORE_DSH_VERSION = "1"
 setLocale('en')
 const root = await mkdtemp(join(tmpdir(), 'dsh-screenshot-'))
 process.env.DSH_HOME = root

@@ -102,6 +102,27 @@ the real Cordis waterfall used by the newer host. Keep the dependency pin: it
 lets the tarball install cleanly (see the peer-dependency note in the README).
 The test must pass both with this bridge and with the host's waterfall service.
 
+## The dsh version gate
+
+`lib/dsh-version.js` refuses to boot on a dsh this build has no evidence for, and
+`lib/boot-block.js` paints the only thing that run draws. Two declarations in
+`package.json` drive it: `engines.dsh` is the hard range (dsh's own preflight
+enforces it too, by disabling the bundle's rows before they mount) and
+`dshSupport.tested` is the set this build was actually run against — running the
+suite against a new dsh is what earns an entry. `dshSupport.recommended` is what
+the page tells the reader to install and must be one of `tested`.
+
+A host that can be read but does not match gets one page and nothing else: no
+session, no settings, no update check, and only Esc/Ctrl+C is accepted. A host
+whose version cannot be read at all is *not* blocked — refusing on a distribution
+we cannot introspect would be a bug in this module, not a fact about the host.
+
+`tests/smoke.test.mjs` covers the verdicts and the detection order,
+`tests/render.test.mjs` the page and its behaviour at short heights. Suites that
+boot the real plugin set `DSH_TUI_IGNORE_DSH_VERSION=1`, so they test the
+interface rather than the gate; that variable is also the maintainer escape hatch
+for an unreleased host.
+
 ## Settings must work on both dsh generations
 
 The two dsh lines store settings in structurally different places, and a row that

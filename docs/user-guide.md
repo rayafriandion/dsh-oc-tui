@@ -81,6 +81,27 @@ pnpm --version
 
 **Compatibility.** Verified against dsh `0.2.1-rc.2`, `0.2.0-rc.2` and `0.1.2-rc.1` (`0.1.1-rc.2` before that). `0.2.1-rc.5` was compared package by package: its core is byte-identical to rc.2, and the one display change — reasoning signatures — is handled here as well. The supported range is declared as `engines.dsh` (`>=0.1.1-rc.2 <0.3.0-0`) in `package.json`: since dsh 0.2.1 the install gate reads that declaration first and ignores the peer list, so a host outside the range is refused at load until its exact version is exempted with `dsh plugin allow-version`. DSH renamed parts of the session API in 0.1.2 — `Session.events` became `snapshotEvents()` — and this plugin reads whichever accessor the host provides, so one build serves both lines.
 
+**dsh 0.2.2 changed how a model is chosen, and this build follows both lines.** From `0.2.2-rc.1` the step's route is fixed before prompt assembly and before `agent/pre-step`, and the `agent/request` waterfall now *rejects* a listener that proposes another provider, model or reasoning effort — it throws `agent/request proposed "…" after step preparation fixed "…"` and the turn dies. A choice has to be recorded between steps with `agent.model.select()`, which appends a durable `model/selection` event. This plugin detects `agent.model.select` on the live agent: when it exists, `/model`, `/provider`, the reasoning slider and the stored reasoning level all go through it, and the waterfall is left untouched; on `0.2.1` and older, where no agent owns a selection, the waterfall still carries them. One build serves both — nothing to configure. Reading a session's route now prefers the recorded selection over the options it was created with, so a resumed session shows the model it will actually use. Nothing else in `0.2.2` needed adapting: the session, projection, command, skill, attachment, approval, question, MCP-client and settings APIs the TUI uses are unchanged, and dsh's own new minimum of Node.js `24.9` is only dsh's requirement (this plugin still runs on `^22.19`).
+
+**The TUI refuses to start on a dsh it was not built for.** At boot it reads the
+version of the dsh that launched the process (`@deepseek-ai/dsh-app-boot`'s
+manifest, falling back to the CLI package and then to the `dsh` on `PATH`) and
+checks it against two declarations shipped in this package: `engines.dsh`, the
+range the plugin supports, and `dshSupport.tested`, the versions the build was
+actually run against. A host outside either list gets one full-screen page — the
+version that is running, the versions that are verified, the recommended one and
+the command to install it — and nothing else: no session, no settings, no update
+check, and `Esc`/`Ctrl+C` is the only input it accepts. The exit status is `1`.
+The page never appears on the same major line by accident: dsh's own preflight
+disables the plugin's rows *before* they mount when `engines.dsh` does not match,
+so in practice you see it after an explicit `dsh plugin allow-version`, or on a
+release inside the range that this build has not been tested against — exactly
+the case `0.2.2-rc.1` was, where the interface started but every model switch
+threw. Two ways out: install the recommended dsh, or update this plugin
+(`npm i -g dsh-oc-tui@latest`) if a newer build already lists your version. For a
+maintainer testing an unreleased host, `DSH_TUI_IGNORE_DSH_VERSION=1` bypasses
+the check for that process only.
+
 **dsh (the harness) 0.2.0 is a breaking update — upgrade this plugin first.** From dsh `0.2.0-rc.1` the agent-preset packages were split: the roster provider `@deepseek-ai/dsh-agent-presets` (which shipped its own presets) became `@deepseek-ai/dsh-agent-preset-registry`, and a new `@deepseek-ai/dsh-agent-preset` package is only a *declarative* preset row that injects the service the registry provides. A TUI older than `0.1.5` names the old provider, and dsh reports it at every boot:
 
 ```
@@ -320,7 +341,8 @@ When the sections outgrow the window a scrollbar appears in the rail's right edg
 
 `Ctrl+P` opens a settings menu over the same host settings namespaces as the Web UI, persisted through `ctx.settings`. Categories appear on the left in wide dialogs and across the top in narrow ones (`Tab` or click to switch):
 
-- **Main** — General (busy-Enter behaviour, permission preset), Sessions (new session, manage sessions), System (provider API hints, update-manager shortcut, settings file path).
+- **Main** — General (busy-Enter behaviour, permission preset), Sessions (new session, manage sessions), System (provider API hints, update-manager shortcut, settings file path), Developer (**Context details**).
+- **Developer → Context details** decides whether the transcript draws the harness's own plumbing: the runtime-context snapshot (`Current working directory…`, file policy, approval policy), the session's system prompt and the `system-reminder` notes. `show` (the default) keeps them as one collapsed box each — click the row or press `Enter` on it to expand — and `hide` drops them from the transcript without touching the session: the boxes stay in the log, so switching back brings them straight back.
 - **Model** — the default provider/model/reasoning choice, then one group per configured provider holding its API key, URL and model list, and finally **Add provider**. Pressing `Enter` on **Models** fetches the provider's advertised catalog (`ctx.llm.discoverModels`) and opens a checkbox window; pressing `Enter` on a listed model makes it the default route. Inside that window `e` edits the highlighted entry — id, context window, output tokens, input modalities — and `Del` removes it from the provider, while **Refresh catalog** asks the endpoint again and **Add model by id** covers a model it does not advertise. The first row is a whole-selection toggle (`selected/total`); a failed fetch prints the endpoint's own refusal — `answered 401; check the API key`, `could not reach …` — instead of an empty list, and a hand-declared route's first successful fetch arrives with every model already selected. **Add provider** offers the same two paths the Web UI's add card does: adopt a route the installed adapter already ships, or declare a custom endpoint (route id, wire protocol, endpoint, and at least one model). Its top row filters the catalog as you type; the declaring path can interrogate its endpoint with a key that has not been stored yet, so adding a gateway is one pass instead of save-then-return. **Remove provider** deletes the profile and its managed credential.
 - **MCP** — see [MCP servers](#mcp-servers).
 - **Update** — see [In-app updates](#in-app-updates).
