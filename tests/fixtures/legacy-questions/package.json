@@ -1,0 +1,9 @@
+{
+  "name": "dsh-oc-tui-legacy-questions-test",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Isolated pinned provider for the legacy user-questions bridge test",
+  "dependencies": {
+    "@deepseek-ai/dsh-user-questions": "0.0.1-rc.5"
+  }
+}

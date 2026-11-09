@@ -17,9 +17,9 @@
 // So this file mounts the REAL `lib/index.js` `apply()` through a REAL cordis
 // Context, registers the REAL `@deepseek-ai/dsh-user-questions`
 // UserQuestionService, and feeds raw ESC bytes into a headless TTY that
-// lib/term.js consumes exactly as it consumes a terminal. The pinned RC
-// service is bridged to Cordis's waterfall below, matching the dispatch used
-// by the newer host service.
+// lib/term.js consumes exactly as it consumes a terminal. The default run
+// exercises the newer host's waterfall; --legacy-provider runs the separately
+// pinned RC service bridged to the same Cordis dispatch.
 //
 // It was checked against the pre-fix code: with `askQuestions(req)` and a free
 // `next`, the run dies with
@@ -44,9 +44,13 @@ import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { Context, Service } from "@deepseek-ai/cordis"
-import { UserQuestionError, UserQuestionService } from "@deepseek-ai/dsh-user-questions"
 import { scopeTarget } from "@deepseek-ai/dsh-scope"
 import { Terminal } from "../lib/term.js"
+
+const legacyProvider = process.argv.includes("--legacy-provider")
+const { UserQuestionError, UserQuestionService } = legacyProvider
+  ? await import("./fixtures/legacy-questions/node_modules/@deepseek-ai/dsh-user-questions/lib/index.js")
+  : await import("@deepseek-ai/dsh-user-questions")
 
 // The plugin reads the harness home for its session store and settings. Point
 // it at a throwaway directory so a test run can never touch the real one.
@@ -149,6 +153,11 @@ new CommandsStub(ctx)
 new SessionPersistenceStub(ctx)
 new TuiStartupStub(ctx)
 const userQuestions = new UserQuestionService(ctx)
+if (legacyProvider) {
+  ok("the pinned legacy provider needs the waterfall bridge", typeof userQuestions.registerProvider === "function")
+} else if (process.argv.includes("--expect-native-waterfall")) {
+  ok("the host provider uses its own waterfall", typeof userQuestions.registerProvider !== "function")
+}
 // The pinned RC service validates requests but predates the host's answerer
 // waterfall. Adapt its provider to the real Cordis dispatch so this test also
 // works with the dependency used by a clean install.
