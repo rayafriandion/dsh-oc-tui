@@ -9,6 +9,7 @@
 // The assertions are on English chrome text, so the run is pinned to English
 // instead of following the machine locale.
 process.env.DSH_TUI_LOCALE = 'en'
+process.env.DSH_TUI_IGNORE_DSH_VERSION = '1'
 
 import { execFileSync } from 'node:child_process'
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'

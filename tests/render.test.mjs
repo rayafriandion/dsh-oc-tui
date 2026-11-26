@@ -950,6 +950,69 @@ for (const locale of ["en", "zh-CN", "de", "ru"]) {
   }
 }
 setLocale("en")
+// Model choices use the row's available width and only animate the focused
+// overflowing label. Drive the clock so the whole scroll is tested without a
+// real-time sleep.
+{
+  const originalNow = Date.now
+  let now = 100000
+  Date.now = () => now
+  try {
+    for (const cols of [40, 80, 120]) {
+      const rows = 24
+      const app = new App({ cols, rows, on() {} })
+      const long = "provider/" + "abcdefghij".repeat(12) + "-模型尾部"
+      const medium = "another-provider/" + "1234567890".repeat(3)
+      const items = [
+        { kind: "setting-option", modelLabel: true, label: long, value: "selected" },
+        { kind: "setting-option", modelLabel: true, label: medium, value: "" },
+        { kind: "setting-option", modelLabel: true, label: "short-model", value: "" },
+      ]
+      app.openSettings(items, { title: "Default model" })
+      const { term, writes } = paintCapture(cols, rows)
+      const lineFor = (screen, index) => {
+        const region = app.hitRegions.find((hit) => hit.kind === "settings-item" && hit.settingsIndex === index)
+        return region ? screen.cells[region.y].map((cell) => cell.ch).join("") : ""
+      }
+      let screen = app.render()
+      term.paint(screen)
+      const initial = lineFor(screen, 0)
+      const other = lineFor(screen, 1)
+      ok(`${cols} columns: focused long model starts at the beginning and animates`,
+        initial.includes("provider/") && app.hasAnimation())
+      if (cols >= 80) {
+        ok(`${cols} columns: model labels use the available row width`, other.includes(medium))
+        ok(`${cols} columns: the selected marker remains visible`, initial.includes("selected"))
+      }
+      let sawTail = false
+      let stableOther = true
+      let paintMatches = true
+      for (let step = 0; step < 140; step++) {
+        now += 220
+        screen = app.render()
+        term.paint(screen)
+        sawTail ||= lineFor(screen, 0).includes("模型尾部")
+        stableOther &&= lineFor(screen, 1) === other
+        paintMatches &&= gridDiff(emulatePaint(writes, cols, rows), screen, cols, rows).length === 0
+      }
+      ok(`${cols} columns: scrolling exposes the end, including wide characters`, sawTail)
+      ok(`${cols} columns: unfocused model stays still`, stableOther)
+      ok(`${cols} columns: scrolling leaves no terminal paint residue`, paintMatches)
+      app.setSettingsSelection(2)
+      screen = app.render()
+      ok(`${cols} columns: moving focus to a fitting model stops the animation`,
+        lineFor(screen, 2).includes("short-model") && !app.hasAnimation())
+      app.setSettingsSelection(0)
+      screen = app.render()
+      ok(`${cols} columns: returning to a model restarts at its beginning`,
+        lineFor(screen, 0).includes("provider/"))
+      app.overlay = null
+      ok(`${cols} columns: closing the picker stops the animation`, !app.hasAnimation())
+    }
+  } finally {
+    Date.now = originalNow
+  }
+}
 {
   const app = new App({ cols: 150, rows: 40, on() {} })
   app.sidebarVisible = true

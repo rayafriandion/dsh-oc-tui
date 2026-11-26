@@ -1468,12 +1468,13 @@ ibApp.toggleNote(ibApp.inboxBlock)
 ok("inbox collapses again", ibApp.inboxBlock.expanded === false && !inboxRender(ibApp).includes("queued one"))
 
 // A turn-boundary claim drains next-step first, then one next-turn entry;
-// every removed id is that claim's steering batch.
+// only next-step input is steering; next-turn starts an ordinary turn.
 ok("claim drains next-step", ibApp.applyInboxSplice({ target: "next-step", start: 0, removedCount: 1, inserted: [] }) === true)
 ok("claim drains one next-turn", ibApp.applyInboxSplice({ target: "next-turn", start: 0, removedCount: 1, inserted: [] }) === true)
 eq("pending lists emptied by the claim", ibApp.inbox.nextStep.length + ibApp.inbox.nextTurn.length, 0)
-ok("claimed ids classify as steering", ibApp.consumeClaimed("m1") === true && ibApp.consumeClaimed("m2") === true)
-ok("claim classification is single-shot", ibApp.consumeClaimed("m1") === false)
+ok("queued turn is not steering", ibApp.consumeClaimed("m1") === false)
+ok("next-step claim is steering", ibApp.consumeClaimed("m2") === true)
+ok("claim classification is single-shot", ibApp.consumeClaimed("m2") === false)
 ok("unknown id is not steering", ibApp.consumeClaimed("nope") === false)
 ibApp.updateInboxBlock()
 ok("emptied inbox drops the block", ibApp.inboxBlock === null && ibApp.blocks.length === 0)
